@@ -251,7 +251,3 @@ http://127.0.0.1:8317/v1
 ```
 
 不要填 `/responses`，ORX 会自动拼接。
-
-### 为什么 Release 页面是空的
-
-Git tag 不等于 GitHub Release。仓库已经推送 `v0.1.0` tag，正式 Release 需要在 GitHub 页面基于该 tag 创建，并上传安装包作为 Release assets。
