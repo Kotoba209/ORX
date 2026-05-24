@@ -15,6 +15,14 @@ ORX 是一个基于 Tauri + Rust + React 的本地 AI 工作流客户端。它�
 - 可设置一个产物总目录，ORX 会按任务和角色分类导出产物。
 - 支持粘贴/拖拽附件，图片会作为视觉输入交给支持图片能力的模型。
 
+## 原理文档
+
+如果想了解 ORCH 如何调度 Agent、Agent 之间如何通过上下文交接、实时巡检和审批打回机制如何运行，请看：
+
+```text
+docs\orx-core-workflow-principles.md
+```
+
 ## 项目目录
 
 ```text
