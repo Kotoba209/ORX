@@ -2,7 +2,7 @@
 
 ## 目标
 
-在 `D:\CodexProjects\workflow-manager-client` 新建一个轻量桌面客户端，用 Tauri + Rust 提供本地项目能力，用 React/Vite 提供深色 CLI 终端风界面。客户端解决 web 版无法自然添加本地项目、读取代码上下文、执行测试命令和沉淀本地规则的问题。
+在 `D:\CodexProjects\ORX` 新建一个轻量桌面客户端，用 Tauri + Rust 提供本地项目能力，用 React/Vite 提供深色 CLI 终端风界面。客户端解决 web 版无法自然添加本地项目、读取代码上下文、执行测试命令和沉淀本地规则的问题。
 
 ## MVP 范围
 

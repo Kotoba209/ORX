@@ -127,7 +127,7 @@ pub fn default_tasks_dir() -> Result<PathBuf, String> {
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("USERPROFILE").map(PathBuf::from))
         .ok_or_else(|| "无法定位用户配置目录".to_string())?;
-    Ok(base.join("WorkflowManagerClient").join("tasks"))
+    Ok(base.join("ORX").join("tasks"))
 }
 
 pub fn create_task_archive(base_dir: impl AsRef<Path>, input: TaskArchiveStartInput) -> Result<TaskArchiveRef, String> {
@@ -591,7 +591,7 @@ mod tests {
             &base,
             TaskArchiveStartInput {
                 task: "做一个登录页".to_string(),
-                project_path: "D:\\CodexProjects\\workflow-manager-client".to_string(),
+                project_path: "D:\\CodexProjects\\ORX".to_string(),
                 workflow_template: "完整需求开发流程".to_string(),
             },
         )

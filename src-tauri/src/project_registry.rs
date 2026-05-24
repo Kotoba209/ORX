@@ -25,7 +25,7 @@ pub fn default_registry_path() -> Result<PathBuf, String> {
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("USERPROFILE").map(PathBuf::from))
         .ok_or_else(|| "无法定位用户配置目录".to_string())?;
-    Ok(base.join("WorkflowManagerClient").join("projects.json"))
+    Ok(base.join("ORX").join("projects.json"))
 }
 
 pub fn add_project(path: impl AsRef<Path>, registry_path: impl AsRef<Path>) -> Result<(RegisteredProject, ProjectSummary), String> {

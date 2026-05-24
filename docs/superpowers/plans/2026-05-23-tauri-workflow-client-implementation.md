@@ -19,7 +19,7 @@
 
 - [ ] **Step 1: Create Tauri React TypeScript skeleton**
 
-Use `npm create tauri-app` or equivalent minimal Tauri structure under `D:\CodexProjects\workflow-manager-client`.
+Use `npm create tauri-app` or equivalent minimal Tauri structure under `D:\CodexProjects\ORX`.
 
 - [ ] **Step 2: Verify baseline commands**
 

@@ -19,7 +19,7 @@ pub fn default_settings_path() -> Result<PathBuf, String> {
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("USERPROFILE").map(PathBuf::from))
         .ok_or_else(|| "无法定位用户配置目录".to_string())?;
-    Ok(base.join("WorkflowManagerClient").join("settings.json"))
+    Ok(base.join("ORX").join("settings.json"))
 }
 
 pub fn load_settings(path: impl AsRef<Path>) -> Result<AppSettings, String> {

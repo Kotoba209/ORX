@@ -13,7 +13,7 @@ pub fn default_workflows_path() -> Result<PathBuf, String> {
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("USERPROFILE").map(PathBuf::from))
         .ok_or_else(|| "无法定位用户配置目录".to_string())?;
-    Ok(base.join("WorkflowManagerClient").join("workflows.json"))
+    Ok(base.join("ORX").join("workflows.json"))
 }
 
 pub fn load_workflows(path: impl AsRef<Path>) -> Result<Option<WorkflowConfigSnapshot>, String> {

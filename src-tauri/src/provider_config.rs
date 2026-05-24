@@ -97,7 +97,7 @@ pub fn default_config_path() -> Result<PathBuf, String> {
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("USERPROFILE").map(PathBuf::from))
         .ok_or_else(|| "无法定位用户配置目录".to_string())?;
-    Ok(base.join("WorkflowManagerClient").join("providers.json"))
+    Ok(base.join("ORX").join("providers.json"))
 }
 
 pub fn default_secrets_path() -> Result<PathBuf, String> {
@@ -105,7 +105,7 @@ pub fn default_secrets_path() -> Result<PathBuf, String> {
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("USERPROFILE").map(PathBuf::from))
         .ok_or_else(|| "无法定位用户配置目录".to_string())?;
-    Ok(base.join("WorkflowManagerClient").join("secrets.json"))
+    Ok(base.join("ORX").join("secrets.json"))
 }
 
 fn default_proxy_url() -> String {
