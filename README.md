@@ -88,15 +88,15 @@ npm run tauri -- build
 
 ```text
 D:\CodexProjects\ORX\src-tauri\target\release\ORX.exe
-D:\CodexProjects\ORX\src-tauri\target\release\bundle\nsis\ORX_0.2.0_x64-setup.exe
-D:\CodexProjects\ORX\src-tauri\target\release\bundle\msi\ORX_0.2.0_x64_en-US.msi
+D:\CodexProjects\ORX\src-tauri\target\release\bundle\nsis\ORX_0.3.0_x64-setup.exe
+D:\CodexProjects\ORX\src-tauri\target\release\bundle\msi\ORX_0.3.0_x64_en-US.msi
 ```
 
 当前仓库也包含一份已构建安装包：
 
 ```text
-release\ORX_0.2.0_x64-setup.exe
-release\ORX_0.2.0_x64_en-US.msi
+release\ORX_0.3.0_x64-setup.exe
+release\ORX_0.3.0_x64_en-US.msi
 ```
 
 ## 本地配置文件

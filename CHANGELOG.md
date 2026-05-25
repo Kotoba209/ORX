@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.3.0 - 2026-05-26
+
+### Added
+
+- Added ORION, a high-permission workflow copilot that can draft workflows from conversation.
+- Added ORION action registry with `direct`, `confirm`, and `strong-confirm` permission levels.
+- Added ORION workflow planner for bug investigation flows with Trellis, bug-investigation, and test-planning capabilities.
+- Added safe ORION local action primitives for project file reads, generated artifact writes, command whitelist validation, release build risk classification, and git action risk classification.
+- Added `@orion` composer flow to preview an action plan, save a drafted workflow after confirmation, and run it through ORCH Core.
+
+### Changed
+
+- Expanded workflow self-tests and Rust tests to cover ORION action permissions, workflow planning, and local action safety boundaries.
+
 ## 0.2.0 - 2026-05-25
 
 ### Added
