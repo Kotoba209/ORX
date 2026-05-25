@@ -6,6 +6,7 @@ mod task_archive;
 mod workflow;
 mod workflow_config_store;
 mod memory_rule_store;
+mod orion_actions;
 
 use project_registry::RegisteredProject;
 use project_scanner::ProjectSummary;
@@ -13,6 +14,7 @@ use provider_config::{AgentBindingInput, AgentRunInput, AgentRunResult, Provider
 use serde::Serialize;
 use app_settings::AppSettings;
 use memory_rule_store::{MemoryRuleInput, MemoryRuleSnapshot};
+use orion_actions::{GeneratedArtifactWriteInput, GeneratedArtifactWriteResult, ProjectFileReadInput, ProjectFileReadResult};
 use task_archive::{ApprovalRecordInput, TaskArchiveFinishInput, TaskArchiveRef, TaskArchiveStartInput, TaskArtifactInput, TaskAttachmentInput, TaskAttachmentSaveResult};
 use workflow_config_store::WorkflowConfigSnapshot;
 use workflow::WorkflowStep;
@@ -166,6 +168,26 @@ fn append_memory_rule(input: MemoryRuleInput) -> Result<MemoryRuleSnapshot, Stri
     memory_rule_store::append_memory_rule(path, input)
 }
 
+#[tauri::command]
+fn orion_read_project_file(input: ProjectFileReadInput) -> Result<ProjectFileReadResult, String> {
+    orion_actions::read_project_file(input)
+}
+
+#[tauri::command]
+fn orion_write_generated_artifact(input: GeneratedArtifactWriteInput) -> Result<GeneratedArtifactWriteResult, String> {
+    orion_actions::write_generated_artifact(input)
+}
+
+#[tauri::command]
+fn orion_validate_whitelisted_command(program: String, args: Vec<String>) -> Result<(), String> {
+    orion_actions::validate_whitelisted_command(&program, &args)
+}
+
+#[tauri::command]
+fn orion_action_risk(kind: String) -> String {
+    orion_actions::orion_action_risk(&kind).to_string()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -194,7 +216,11 @@ pub fn run() {
             save_workflow_config,
             get_memory_rules,
             save_memory_rules,
-            append_memory_rule
+            append_memory_rule,
+            orion_read_project_file,
+            orion_write_generated_artifact,
+            orion_validate_whitelisted_command,
+            orion_action_risk
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

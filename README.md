@@ -11,6 +11,7 @@ ORX 是一个基于 Tauri + Rust + React 的本地 AI 工作流客户端。它�
 - 为 PM、PD、DEV、ARCH、QA 等 Agent 绑定模型服务。
 - 自定义工作流步骤、负责人、审批节点和打回规则。
 - 支持给工作流节点挂载 skill/capability；默认 PD Clarification 节点内置 Trellis 多轮需求澄清。
+- 新增 ORION 高权限调度副驾驶，可用 `@orion` 通过对话生成工作流草案和动作计划。
 - 启动任务时按任务类型动态选择完整开发、Bug 修复或仅测试流程。
 - 在 PD PRD、ARCH CR 等人工审批点弹出预览窗口，支持审批意见。
 - DEV 产物必须是非空文件，空文件或无法落盘会被阻断并打回。
@@ -192,6 +193,22 @@ PM / Retrospective
 其中 `PD / Clarification` 使用 Trellis 风格多轮提问，需求未明确时会暂停等待你回答；这不是审批。PD 文档和 ARCH CR 可配置为需要人工审批。审批时可以填写意见，否决后会按打回规则回滚。
 
 任务启动时 ORCH 会先做动态路由：缺陷修复类任务优先走 Bug 修复流程，仅测试诉求优先走仅测试流程，新功能/页面/实现类任务走完整需求开发流程；如果任务类型不明确，则沿用当前选择的工作流。
+
+## ORION 调度副驾驶
+
+在输入框中以 `@orion` 开头可以进入 ORION 规划模式，例如：
+
+```text
+@orion 我想查一个登录失败的 bug
+```
+
+ORION 会生成一个工作流草案、为节点挂载 capability，并展示准备执行的动作计划。回复“同意”后，客户端会保存该工作流并交给 ORCH Core 执行。
+
+ORION 动作按权限等级控制：
+
+- `direct`：安全读取和草案类动作，可直接执行，例如 `file.readProjectFile`、`workflow.draft`。
+- `confirm`：本地状态修改、写产物、白名单命令和打包动作，需要确认，例如 `workflow.create`、`command.runWhitelisted`、`release.build`。
+- `strong-confirm`：Git 提交、标签和推送动作，需要强确认，例如 `git.commit`、`git.tag`、`git.push`。
 
 ## 长期记忆规则
 

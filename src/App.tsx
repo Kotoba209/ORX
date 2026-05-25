@@ -40,6 +40,8 @@ import {
   retrieveRelevantMemoryRules,
   type MemoryRule,
 } from "./memoryRules";
+import { createOrionActionPlan, draftOrionWorkflow } from "./orionPlanner";
+import type { OrionAction } from "./orionActions";
 
 type ProjectSummary = { root: string; files: ProjectFile[]; source_count: number; test_count: number; important_files: string[]; context_brief: string };
 type RegisteredProject = { id: string; name: string; path: string; source_count: number; test_count: number; context_brief: string; updated_at: number };
@@ -61,6 +63,7 @@ type TaskArchiveRef = { id: string; path: string };
 type WorkflowRuntime = { task: string; enabledSteps: WorkflowStep[]; nextIndex: number; upstream: string; archive: TaskArchiveRef | null; workflowStart: number; runTotals: { elapsed_ms: number; input_tokens: number; output_tokens: number; total_tokens: number }; artifactRetries?: Record<string, number> };
 type ApprovalGate = { step: WorkflowStep; stepIndex: number; result: AgentRunResult; runtime: WorkflowRuntime; preview: string; upstreamBefore: string };
 type ClarificationGate = { step: WorkflowStep; stepIndex: number; result: AgentRunResult; runtime: WorkflowRuntime; prompt: string };
+type OrionPendingPlan = { task: string; workflow: WorkflowDefinition; actions: OrionAction[] };
 type InspectorView = "output" | "context" | "files";
 type ConfigPanel = "provider" | "workflow" | "settings" | null;
 type ContextMenuState =
@@ -189,6 +192,7 @@ function App() {
   const [taskArchive, setTaskArchive] = useState<TaskArchiveRef | null>(null);
   const [approvalGate, setApprovalGate] = useState<ApprovalGate | null>(null);
   const [clarificationGate, setClarificationGate] = useState<ClarificationGate | null>(null);
+  const [orionPendingPlan, setOrionPendingPlan] = useState<OrionPendingPlan | null>(null);
   const [currentActivity, setCurrentActivity] = useState("");
   const [approvalNote, setApprovalNote] = useState("");
   const [workspaceFiles, setWorkspaceFiles] = useState<ProjectFile[]>([]);
@@ -860,6 +864,16 @@ function App() {
     const attachments = pendingAttachments;
     const taskText = text || (attachments.length > 0 ? "请读取并处理我发送的附件。" : "");
     if (!taskText || workflowRunning) return;
+    if (orionPendingPlan) {
+      if (/^(同意|执行|确认|保存并运行|approve|yes|y)$/i.test(text)) {
+        await executeOrionPendingPlan(orionPendingPlan);
+        return;
+      }
+      setOrionPendingPlan(null);
+      setRequirement("");
+      setChatLines((lines) => [...lines, `你：${text}`, "ORION：已取消上一份动作计划。你可以重新描述目标，我会重新规划。"]);
+      return;
+    }
     if (clarificationGate) {
       await answerClarificationGate(text);
       return;
@@ -878,8 +892,39 @@ function App() {
       setRequirement("");
       return;
     }
+    if (/^@orion\b/i.test(text)) {
+      createOrionPlan(text.replace(/^@orion\b/i, "").trim() || "请 ORION 规划一个工作流。");
+      setRequirement("");
+      return;
+    }
     setRequirement("");
     await startRealWorkflow(taskText, attachments);
+  }
+
+  function createOrionPlan(task: string) {
+    const workflow = draftOrionWorkflow(task);
+    const actions = createOrionActionPlan(workflow);
+    setOrionPendingPlan({ task, workflow, actions });
+    setInspectorView("output");
+    setChatLines((lines) => [
+      ...lines,
+      `你：@orion ${task}`,
+      `ORION：我建议创建工作流「${workflow.name}」。`,
+      `ORION：${workflow.steps.map((step, index) => `${index + 1}. ${step.owner} / ${step.stage}${step.skill_ids?.length ? `（${step.skill_ids.join(", ")}）` : ""}`).join("；")}`,
+      `ORION：准备执行 ${actions.length} 个动作：${actions.map((action) => `${action.kind}[${action.risk}]`).join(" -> ")}。回复“同意”即可保存并运行；回复其他内容会取消这份计划。`,
+    ]);
+    setLogLines((lines) => [...lines, `ORION plan: ${workflow.name}`, ...actions.map((action) => `${action.kind} risk=${action.risk} ${action.summary}`)]);
+  }
+
+  async function executeOrionPendingPlan(plan: OrionPendingPlan) {
+    const nextWorkflows = [...workflows.filter((workflow) => workflow.id !== plan.workflow.id), plan.workflow];
+    setWorkflows(nextWorkflows);
+    setActiveWorkflowId(plan.workflow.id);
+    setOrionPendingPlan(null);
+    setRequirement("");
+    setChatLines((lines) => [...lines, "你：同意", `ORION：已保存工作流「${plan.workflow.name}」，现在交给 ORCH Core 执行。`]);
+    setLogLines((lines) => [...lines, `ORION execute: saved workflow ${plan.workflow.id}`]);
+    await startRealWorkflow(plan.task, [], plan.workflow);
   }
 
   function handleComposerPaste(event: React.ClipboardEvent<HTMLTextAreaElement>) {
@@ -893,12 +938,14 @@ function App() {
     if (event.dataTransfer.files.length > 0) void addAttachmentFiles(event.dataTransfer.files);
   }
 
-  async function startRealWorkflow(task: string, attachments: PendingAttachment[] = []) {
+  async function startRealWorkflow(task: string, attachments: PendingAttachment[] = [], workflowOverride?: WorkflowDefinition) {
     if (!canUseTauriCommands()) {
       setLogLines((lines) => [...lines, "真实流程需要在 Tauri 客户端中运行；浏览器预览只能查看界面。"]);
       return;
     }
-    const routeDecision = recommendWorkflowForTask(task, workflows, activeWorkflowId);
+    const routeDecision = workflowOverride
+      ? { workflow: workflowOverride, confidence: "high" as const, reason: "ORION 已确认并保存该工作流。", matchedKind: "current" as const }
+      : recommendWorkflowForTask(task, workflows, activeWorkflowId);
     const selectedWorkflow = routeDecision.workflow;
     const enabledSteps = selectedWorkflow.steps.filter((step) => step.enabled !== false);
     if (selectedWorkflow.id !== activeWorkflowId && routeDecision.confidence !== "low") {

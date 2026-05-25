@@ -7,6 +7,7 @@
 ORX 里有两类“管理者”概念，需要分清：
 
 - **ORCH**：程序调度器。它不是一个模型 Agent，而是客户端里的流程控制逻辑，负责读取工作流配置、按顺序调用 Agent、保存产物、处理审批、打回重做、统计耗时和 token。
+- **ORION**：高权限调度副驾驶。它面向用户自由对话，负责理解目标、生成/修改工作流草案、挂载 capability、展示动作计划，并在用户确认后把工作交给 ORCH 执行。
 - **PM Agent**：流程管理 Agent。它是一个真实模型 Agent，负责 Intake、复盘总结、流程治理建议等内容产出。
 
 其他 Agent：
@@ -94,6 +95,16 @@ PM / Retrospective
 - 如果任务类型不明确，ORCH 会沿用用户当前选择的工作流，避免过度自动切换。
 
 动态路由只决定本轮使用哪组步骤，不会删除或改写用户保存的工作流配置。界面会在启动日志中显示路由选择、置信度和原因。
+
+### 3.2 ORION 动作权限
+
+ORION 的动作不直接绕过客户端，而是通过 Action Registry 和 Action Executor 执行。动作分为三级：
+
+- `direct`：安全读取和草案动作，例如 `file.readProjectFile`、`workflow.draft`、`memory.search`。
+- `confirm`：会修改本地状态或运行本地流程的动作，例如 `workflow.create`、`workflow.run`、`file.writeGeneratedArtifact`、`command.runWhitelisted`、`release.build`。
+- `strong-confirm`：影响 Git 历史、标签或远端的动作，例如 `git.commit`、`git.tag`、`git.push`。
+
+第一版 ORION 支持用 `@orion` 生成工作流草案和动作计划。用户回复“同意”后，ORION 保存工作流并调用 ORCH Core 执行。
 
 ## 4. Agent 之间怎么“对话”
 
@@ -367,6 +378,7 @@ error=operation timed out
 - 动态路由是轻量规则分类，不是独立规划模型。
 - 长期记忆规则库使用本地 JSON 文件和关键词检索，暂未接向量索引或人工批准入库。
 - Trellis 目前是内置 skill/capability 元数据和 prompt 规则，不是外部插件运行时；后续可扩展为第三方 skill 注册表。
+- ORION 第一版已经具备动作权限建模和工作流草案能力，但 Git/release 等高风险动作仍以强确认和安全执行层为边界。
 - 测试执行目前以 QA 产出测试计划/报告为主，还没有统一封装真实命令执行沙箱。
 - API Key 当前支持环境变量和本地 `secrets.json`，后续可迁移到系统 keychain。
 
