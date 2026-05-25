@@ -5,6 +5,9 @@ export type WorkflowStep = {
   enabled?: boolean;
   approval?: "none" | "user" | "auto";
   rollback_target?: string;
+  skill_ids?: string[];
+  interaction?: "single-turn" | "multi-turn";
+  exit_condition?: "node_complete" | "requirements_ready";
 };
 
 export type WorkflowTotals = {
@@ -34,6 +37,16 @@ export type ApprovalDecision = {
 
 export const defaultSteps: WorkflowStep[] = [
   { stage: "Intake", owner: "PM Agent", instruction: "收集需求、项目上下文和用户约束。", enabled: true, approval: "none" },
+  {
+    stage: "Clarification",
+    owner: "PD Agent",
+    instruction: "使用 Trellis 需求澄清法连续追问用户，直到目标用户、核心场景、边界条件、验收标准和不做范围足够明确。一次只问 1-3 个关键问题；需求足够明确时必须明确写出“需求已明确”。",
+    enabled: true,
+    approval: "none",
+    skill_ids: ["trellis"],
+    interaction: "multi-turn",
+    exit_condition: "requirements_ready",
+  },
   { stage: "ScenarioRehearsal", owner: "PD Agent", instruction: "输出可预览的需求产品文档，包含场景预演、主路径、异常路径和验收标准。", enabled: true, approval: "user", rollback_target: "ScenarioRehearsal" },
   { stage: "BoundaryProbe", owner: "PD Agent", instruction: "做边界探测，识别环境依赖、输入输出、失败条件和打回条件。", enabled: true, approval: "none" },
   { stage: "TaskSplit", owner: "DEV Agent", instruction: "拆分接口、数据流、实现任务和测试任务。", enabled: true, approval: "auto", rollback_target: "TaskSplit" },

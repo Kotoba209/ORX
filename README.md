@@ -10,6 +10,7 @@ ORX 是一个基于 Tauri + Rust + React 的本地 AI 工作流客户端。它�
 - 配置 OpenAI-compatible Provider、模型、Base URL、代理和 API Key 引用。
 - 为 PM、PD、DEV、ARCH、QA 等 Agent 绑定模型服务。
 - 自定义工作流步骤、负责人、审批节点和打回规则。
+- 支持给工作流节点挂载 skill/capability；默认 PD Clarification 节点内置 Trellis 多轮需求澄清。
 - 启动任务时按任务类型动态选择完整开发、Bug 修复或仅测试流程。
 - 在 PD PRD、ARCH CR 等人工审批点弹出预览窗口，支持审批意见。
 - DEV 产物必须是非空文件，空文件或无法落盘会被阻断并打回。
@@ -178,6 +179,7 @@ Base URL 只需要配置到 `/v1`，ORX 会自动调用 `/responses`。
 
 ```text
 PM / Intake
+PD / Clarification
 PD / ScenarioRehearsal
 PD / BoundaryProbe
 ARCH / RedBlueChallenge
@@ -187,7 +189,7 @@ QA / TestPlan
 PM / Retrospective
 ```
 
-其中 PD 文档和 ARCH CR 可配置为需要人工审批。审批时可以填写意见，否决后会按打回规则回滚。
+其中 `PD / Clarification` 使用 Trellis 风格多轮提问，需求未明确时会暂停等待你回答；这不是审批。PD 文档和 ARCH CR 可配置为需要人工审批。审批时可以填写意见，否决后会按打回规则回滚。
 
 任务启动时 ORCH 会先做动态路由：缺陷修复类任务优先走 Bug 修复流程，仅测试诉求优先走仅测试流程，新功能/页面/实现类任务走完整需求开发流程；如果任务类型不明确，则沿用当前选择的工作流。
 

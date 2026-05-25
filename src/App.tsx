@@ -30,6 +30,11 @@ import { toChatTimelineItems } from "./chatTimeline";
 import { createWorkflowStageOptions } from "./workflowStageOptions";
 import { recommendWorkflowForTask } from "./workflowRouter";
 import {
+  nextRuntimeAfterClarificationAnswer,
+  parseClarificationOutput,
+  stepUsesInteractiveClarification,
+} from "./clarificationState";
+import {
   buildMemoryContextBlock,
   createMemoryRuleCandidate,
   retrieveRelevantMemoryRules,
@@ -55,6 +60,7 @@ type WorkflowMetric = { stage: string; owner: string; status: "running" | "done"
 type TaskArchiveRef = { id: string; path: string };
 type WorkflowRuntime = { task: string; enabledSteps: WorkflowStep[]; nextIndex: number; upstream: string; archive: TaskArchiveRef | null; workflowStart: number; runTotals: { elapsed_ms: number; input_tokens: number; output_tokens: number; total_tokens: number }; artifactRetries?: Record<string, number> };
 type ApprovalGate = { step: WorkflowStep; stepIndex: number; result: AgentRunResult; runtime: WorkflowRuntime; preview: string; upstreamBefore: string };
+type ClarificationGate = { step: WorkflowStep; stepIndex: number; result: AgentRunResult; runtime: WorkflowRuntime; prompt: string };
 type InspectorView = "output" | "context" | "files";
 type ConfigPanel = "provider" | "workflow" | "settings" | null;
 type ContextMenuState =
@@ -182,6 +188,7 @@ function App() {
   const [workflowStartedAt, setWorkflowStartedAt] = useState<number | null>(null);
   const [taskArchive, setTaskArchive] = useState<TaskArchiveRef | null>(null);
   const [approvalGate, setApprovalGate] = useState<ApprovalGate | null>(null);
+  const [clarificationGate, setClarificationGate] = useState<ClarificationGate | null>(null);
   const [currentActivity, setCurrentActivity] = useState("");
   const [approvalNote, setApprovalNote] = useState("");
   const [workspaceFiles, setWorkspaceFiles] = useState<ProjectFile[]>([]);
@@ -836,11 +843,27 @@ function App() {
     await continueWorkflow(rollbackRuntime);
   }
 
+  async function answerClarificationGate(answer: string) {
+    const gate = clarificationGate;
+    if (!gate) return;
+    const nextRuntime = nextRuntimeAfterClarificationAnswer(gate.runtime, gate.step, answer, gate.stepIndex);
+    setRequirement("");
+    setError("");
+    setClarificationGate(null);
+    setChatLines((lines) => [...lines, `你：${answer}`, `ORCH：已把补充信息交回 ${gate.step.owner} / ${gate.step.stage}，继续 Trellis 澄清。`]);
+    setLogLines((lines) => [...lines, `Trellis 用户补充：${answer}`, `回到节点：${gate.step.owner} / ${gate.step.stage}`]);
+    await continueWorkflow(nextRuntime);
+  }
+
   async function handleComposerSubmit() {
     const text = requirement.trim();
     const attachments = pendingAttachments;
     const taskText = text || (attachments.length > 0 ? "请读取并处理我发送的附件。" : "");
     if (!taskText || workflowRunning) return;
+    if (clarificationGate) {
+      await answerClarificationGate(text);
+      return;
+    }
     if (approvalGate) {
       const decision = parseApprovalInput(text);
       if (decision.action === "approved") {
@@ -888,6 +911,7 @@ function App() {
     setWorkflowMetrics([]);
     setTaskArchive(null);
     setApprovalGate(null);
+    setClarificationGate(null);
     setApprovalNote("");
     setCurrentActivity("ORCH 实时巡检中");
     const approvalSummary = workflowApprovalSummary(enabledSteps);
@@ -926,8 +950,10 @@ function App() {
   async function continueWorkflow(runtime: WorkflowRuntime) {
     setWorkflowRunning(true);
     setApprovalGate(null);
+    setClarificationGate(null);
     let activeStep: WorkflowStep | null = null;
     let pausedForApproval = false;
+    let pausedForClarification = false;
     try {
       for (let stepIndex = runtime.nextIndex; stepIndex < runtime.enabledSteps.length; stepIndex += 1) {
         const step = runtime.enabledSteps[stepIndex];
@@ -954,6 +980,29 @@ function App() {
         runtime.runTotals.output_tokens += result.output_tokens;
         runtime.runTotals.total_tokens += result.total_tokens;
         const nextUpstream = trimWorkflowContext(`${runtime.upstream}\n\n[${result.owner} / ${result.stage}]\n${result.output}`);
+        if (stepUsesInteractiveClarification(step)) {
+          const clarificationDecision = parseClarificationOutput(result.output);
+          runtime = { ...runtime, upstream: nextUpstream, nextIndex: stepIndex + 1 };
+          if (clarificationDecision.status === "needs_user_input") {
+            pausedForClarification = true;
+            setWorkflowMetrics((metrics) => metrics.map((metric) => metric.stage === step.stage && metric.owner === step.owner && metric.status === "running" ? {
+              stage: result.stage,
+              owner: result.owner,
+              status: "done",
+              elapsed_ms: result.elapsed_ms,
+              input_tokens: result.input_tokens,
+              output_tokens: result.output_tokens,
+              total_tokens: result.total_tokens,
+              output_preview: previewOutput(result.output),
+            } : metric));
+            setWorkflowRunning(false);
+            setCurrentActivity(`等待澄清：${step.owner} / ${step.stage}`);
+            setClarificationGate({ step, stepIndex, result, runtime: { ...runtime, nextIndex: stepIndex }, prompt: clarificationDecision.prompt });
+            setChatLines((lines) => [...lines, `${step.owner}：${clarificationDecision.prompt}`, "ORCH：Trellis 正在澄清需求，请直接回复问题；这不是审批，PRD 审核会在后续保留。"]);
+            setLogLines((lines) => [...lines, `Trellis 澄清暂停：${step.owner} / ${step.stage}`, `澄清问题：${previewOutput(clarificationDecision.prompt)}`]);
+            return;
+          }
+        }
         const needsFileArtifact = taskLikelyNeedsFileArtifact(`${runtime.task}\n${runtime.upstream}`) && stepShouldProduceFileArtifact(step);
         const artifactSave = await trySaveTaskArtifact(runtime.archive, result, "done", result.output);
         if (needsFileArtifact && (!outputHasFileArtifact(result.output) || !artifactSave.ok)) {
@@ -1018,7 +1067,7 @@ function App() {
       await tryFinishTaskArchive(runtime.archive, "failed", wallElapsed, runtime.runTotals, `# Retrospective\n\n- 状态: failed\n- 失败节点: ${failedAt}\n- 总耗时: ${formatDuration(wallElapsed)}\n\n${message}\n`);
     } finally {
       setWorkflowRunning(false);
-      if (!pausedForApproval) setCurrentActivity("");
+      if (!pausedForApproval && !pausedForClarification) setCurrentActivity("");
     }
   }
 
@@ -1180,7 +1229,7 @@ function App() {
                 <em>{metric.elapsed_ms ? formatDuration(metric.elapsed_ms) : "..."}</em>
               </article>)}
             </div>}
-            {(workflowRunning || approvalGate) && <p className="thinking-line" aria-live="polite"><span>$</span><span className="thinking-content">{currentActivity || "ORCH 处理中"}{workflowRunning && <><i></i><i></i><i></i></>}</span></p>}
+            {(workflowRunning || approvalGate || clarificationGate) && <p className="thinking-line" aria-live="polite"><span>$</span><span className="thinking-content">{currentActivity || "ORCH 处理中"}{workflowRunning && <><i></i><i></i><i></i></>}</span></p>}
           </div>
         </section>
         <form
@@ -1198,7 +1247,7 @@ function App() {
               <button type="button" aria-label={`移除附件 ${attachment.name}`} onClick={() => removePendingAttachment(attachment.id)}>×</button>
             </div>)}
           </div>}
-          <textarea value={requirement} placeholder="Assign a task to ORCH，或粘贴/拖入文件" onPaste={handleComposerPaste} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} onChange={(event) => setRequirement(event.target.value)} aria-label="需求描述" />
+          <textarea value={requirement} placeholder={clarificationGate ? "直接回答 Trellis 的澄清问题" : "Assign a task to ORCH，或粘贴/拖入文件"} onPaste={handleComposerPaste} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} onChange={(event) => setRequirement(event.target.value)} aria-label="需求描述" />
           <div className="composer-toolbar">
             <div className="template-picker" onClick={(event) => event.stopPropagation()}>
               <button type="button" aria-haspopup="listbox" aria-expanded={workflowMenuOpen} onClick={() => setWorkflowMenuOpen((open) => !open)}>{activeWorkflow?.name ?? "选择工作流"}</button>
@@ -1206,7 +1255,7 @@ function App() {
                 {workflows.map((workflow) => <button type="button" role="option" aria-selected={activeWorkflowId === workflow.id} key={workflow.id} onClick={() => { setActiveWorkflowId(workflow.id); setWorkflowMenuOpen(false); }}>{workflow.name}{workflow.isDefault ? " · 默认" : ""}</button>)}
               </div>}
             </div>
-            <button type="submit" aria-label={approvalGate ? "提交审批意见" : "启动工作流"} disabled={workflowRunning}>↑</button>
+            <button type="submit" aria-label={approvalGate ? "提交审批意见" : clarificationGate ? "提交澄清回答" : "启动工作流"} disabled={workflowRunning}>↑</button>
           </div>
         </form>
       </section>
@@ -1222,6 +1271,7 @@ function App() {
             <span>total {workflowTotals.total_tokens || "未返回"}</span>
           </div>
           {approvalGate && <article className="approval-hint"><strong>等待审批</strong><span>{approvalGate.step.owner} / {approvalGate.step.stage}</span><p>审批预览已在中间弹窗打开。</p></article>}
+          {clarificationGate && <article className="approval-hint"><strong>等待澄清</strong><span>{clarificationGate.step.owner} / {clarificationGate.step.stage}</span><p>Trellis 正在追问需求，直接回复即可。</p></article>}
           {taskArchive && <p>task archive: {taskArchive.path}</p>}
           {workflowMetrics.map((metric, index) => <article className={`metric-row ${metric.status}`} key={`${metric.stage}-${metric.owner}-${index}`}>
             <header><strong>{metric.owner}</strong><span>{metric.stage}</span><em>{metric.status === "running" ? "running" : metric.status === "done" ? "done" : "failed"}</em></header>

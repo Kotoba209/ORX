@@ -30,6 +30,22 @@ test("full workflow keeps user approval gates while bug-fix skips product PRD ap
   assert.equal(bugFix.steps.find((step) => step.stage === "CodeReview")?.approval, "user");
 });
 
+test("full workflow starts PD with Trellis multi-turn clarification before PRD approval", () => {
+  const workflows = createDefaultWorkflows();
+  const full = workflows.find((workflow) => workflow.id === "full-development");
+  assert.ok(full);
+
+  const stages = full.steps.map((step) => step.stage);
+  assert.deepEqual(stages.slice(0, 3), ["Intake", "Clarification", "ScenarioRehearsal"]);
+
+  const clarification = full.steps.find((step) => step.stage === "Clarification");
+  assert.equal(clarification?.owner, "PD Agent");
+  assert.deepEqual(clarification?.skill_ids, ["trellis"]);
+  assert.equal(clarification?.interaction, "multi-turn");
+  assert.equal(clarification?.exit_condition, "requirements_ready");
+  assert.equal(clarification?.approval, "none");
+});
+
 test("duplicating a workflow creates an editable independent copy", () => {
   const { workflows, activeWorkflowId } = duplicateWorkflow(createDefaultWorkflows(), "bug-fix");
   const original = workflows.find((workflow) => workflow.id === "bug-fix");

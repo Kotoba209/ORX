@@ -66,6 +66,7 @@ flowchart TD
 
 ```text
 PM / Intake
+PD / Clarification
 PD / ScenarioRehearsal
 PD / BoundaryProbe
 DEV / TaskSplit
@@ -78,6 +79,8 @@ PM / Retrospective
 
 - `PD Agent / ScenarioRehearsal`：产品文档产出后需要用户确认。
 - `ARCH Agent / CodeReview`：架构师 Review 后需要用户确认。
+
+`PD Agent / Clarification` 默认挂载 `trellis` skill，交互方式是 `multi-turn`。它会在 PRD 生成前持续追问需求，直到产物中明确写出“需求已明确”。澄清等待和审批等待是两种不同状态：澄清是在产物成型前补足需求；审批是在产物生成后确认是否进入下一阶段。
 
 如果用户选择 Bug 修复流程、仅测试流程，或者自己编辑工作流，ORCH 会按当前启用的节点重新调度。
 
@@ -123,6 +126,15 @@ DEV 的实现产物...
 ```
 
 所以“Agent 相互对话”的本质是：**上一个 Agent 的产物成为下一个 Agent 的上下文输入**。所有交接都经过 ORCH，Agent 不直接点对点通信。
+
+对于 Trellis 澄清节点，用户的每次回答会被 ORCH 追加为：
+
+```text
+[ORCH / Trellis clarification answer]
+PD Agent / Clarification 用户补充：...
+```
+
+然后 ORCH 会重新运行同一个 Clarification 节点，直到 PD Agent 判断需求已明确，再继续进入 ScenarioRehearsal 和后续人工审批。
 
 ## 5. ORCH 下发给 Agent 的 Prompt 结构
 
@@ -354,6 +366,7 @@ error=operation timed out
 - 巡检是实时推进循环，不是后台定时守护进程。
 - 动态路由是轻量规则分类，不是独立规划模型。
 - 长期记忆规则库使用本地 JSON 文件和关键词检索，暂未接向量索引或人工批准入库。
+- Trellis 目前是内置 skill/capability 元数据和 prompt 规则，不是外部插件运行时；后续可扩展为第三方 skill 注册表。
 - 测试执行目前以 QA 产出测试计划/报告为主，还没有统一封装真实命令执行沙箱。
 - API Key 当前支持环境变量和本地 `secrets.json`，后续可迁移到系统 keychain。
 
