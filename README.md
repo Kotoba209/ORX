@@ -10,9 +10,11 @@ ORX 是一个基于 Tauri + Rust + React 的本地 AI 工作流客户端。它�
 - 配置 OpenAI-compatible Provider、模型、Base URL、代理和 API Key 引用。
 - 为 PM、PD、DEV、ARCH、QA 等 Agent 绑定模型服务。
 - 自定义工作流步骤、负责人、审批节点和打回规则。
+- 启动任务时按任务类型动态选择完整开发、Bug 修复或仅测试流程。
 - 在 PD PRD、ARCH CR 等人工审批点弹出预览窗口，支持审批意见。
 - DEV 产物必须是非空文件，空文件或无法落盘会被阻断并打回。
 - 可设置一个产物总目录，ORX 会按任务和角色分类导出产物。
+- 复盘产物会沉淀到本地长期记忆规则库，后续任务启动时自动检索相关规则。
 - 支持粘贴/拖拽附件，图片会作为视觉输入交给支持图片能力的模型。
 
 ## 原理文档
@@ -111,6 +113,7 @@ ORX 的用户配置默认保存到：
 %APPDATA%\ORX\settings.json    # 产物总目录等应用设置
 %APPDATA%\ORX\projects.json    # 已添加项目列表
 %APPDATA%\ORX\workflows.json   # 工作流配置
+%APPDATA%\ORX\memory_rules.json # 长期记忆规则库
 %APPDATA%\ORX\tasks\           # 默认任务归档目录
 ```
 
@@ -185,6 +188,12 @@ PM / Retrospective
 ```
 
 其中 PD 文档和 ARCH CR 可配置为需要人工审批。审批时可以填写意见，否决后会按打回规则回滚。
+
+任务启动时 ORCH 会先做动态路由：缺陷修复类任务优先走 Bug 修复流程，仅测试诉求优先走仅测试流程，新功能/页面/实现类任务走完整需求开发流程；如果任务类型不明确，则沿用当前选择的工作流。
+
+## 长期记忆规则
+
+每轮 `Retrospective` 产物会追加为一条长期记忆规则，保存到 `%APPDATA%\ORX\memory_rules.json`。新任务启动时，ORCH 会根据任务文本和项目上下文检索相关规则，并把命中的规则放入 Agent 上游上下文，帮助后续节点遵守历史经验和项目习惯。
 
 ## 产物输出
 

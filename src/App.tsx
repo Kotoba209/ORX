@@ -28,6 +28,13 @@ import {
 import { buildFileTree, type FileTreeNode, type ProjectFile } from "./projectTree";
 import { toChatTimelineItems } from "./chatTimeline";
 import { createWorkflowStageOptions } from "./workflowStageOptions";
+import { recommendWorkflowForTask } from "./workflowRouter";
+import {
+  buildMemoryContextBlock,
+  createMemoryRuleCandidate,
+  retrieveRelevantMemoryRules,
+  type MemoryRule,
+} from "./memoryRules";
 
 type ProjectSummary = { root: string; files: ProjectFile[]; source_count: number; test_count: number; important_files: string[]; context_brief: string };
 type RegisteredProject = { id: string; name: string; path: string; source_count: number; test_count: number; context_brief: string; updated_at: number };
@@ -39,6 +46,7 @@ type AgentBinding = { role: string; provider_id: string; model: string; temperat
 type ProviderSnapshot = { providers: ProviderConfig[]; agents: AgentBinding[] };
 type WorkflowConfigSnapshot = { workflows: WorkflowDefinition[]; active_workflow_id: string };
 type AppSettings = { artifact_output_dir: string };
+type MemoryRuleSnapshot = { rules: MemoryRule[] };
 type PendingAttachment = { id: string; path?: string; name: string; kind: string; bytes: number; inlineBytes?: number[] };
 type TaskAttachmentRecord = { original_name: string; path: string; bytes: number; kind: string; text_preview?: string | null };
 type TaskAttachmentSaveResult = { task_id: string; attachments: TaskAttachmentRecord[]; context_block: string };
@@ -161,6 +169,7 @@ function App() {
   const [configPanel, setConfigPanel] = useState<ConfigPanel>(null);
   const [providerTestResult, setProviderTestResult] = useState<ProviderConnectionResult | null>(null);
   const [appSettings, setAppSettings] = useState<AppSettings>({ artifact_output_dir: "" });
+  const [memoryRules, setMemoryRules] = useState<MemoryRule[]>([]);
   const [testingProvider, setTestingProvider] = useState(false);
   const [savingConfig, setSavingConfig] = useState(false);
   const [activeConversationId, setActiveConversationId] = useState("");
@@ -200,7 +209,7 @@ function App() {
     };
   }, [workflowMetrics]);
 
-  useEffect(() => { void loadProjects(); void loadProviderConfig(); void loadAppSettings(); void loadWorkflowConfig(); }, []);
+  useEffect(() => { void loadProjects(); void loadProviderConfig(); void loadAppSettings(); void loadWorkflowConfig(); void loadMemoryRules(); }, []);
   useEffect(() => {
     if (!workflows.some((workflow) => workflow.id === activeWorkflowId)) {
       setActiveWorkflowId(getDefaultWorkflow(workflows)?.id ?? workflows[0]?.id ?? "");
@@ -260,6 +269,29 @@ function App() {
       if (settings.artifact_output_dir) setLogLines((lines) => [...lines, `产物总目录：${settings.artifact_output_dir}`]);
     } catch {
       setLogLines((lines) => [...lines, "浏览器预览模式：产物目录设置需要在 Tauri 客户端中持久化。"]);
+    }
+  }
+
+  async function loadMemoryRules() {
+    try {
+      const snapshot = await invoke<MemoryRuleSnapshot>("get_memory_rules");
+      setMemoryRules(snapshot.rules);
+      if (snapshot.rules.length > 0) setLogLines((lines) => [...lines, `已加载 ${snapshot.rules.length} 条长期记忆规则。`]);
+    } catch {
+      setLogLines((lines) => [...lines, "浏览器预览模式：长期记忆规则需要在 Tauri 客户端中持久化。"]);
+    }
+  }
+
+  async function tryAppendMemoryRule(candidateText: string, archive: TaskArchiveRef | null, stage: string) {
+    if (!archive || !candidateText.trim()) return;
+    try {
+      const candidate = createMemoryRuleCandidate(candidateText, archive.id, stage);
+      const snapshot = await invoke<MemoryRuleSnapshot>("append_memory_rule", { input: candidate });
+      setMemoryRules(snapshot.rules);
+      setLogLines((lines) => [...lines, `长期记忆已沉淀：${candidate.title}`]);
+    } catch (memoryError) {
+      const message = memoryError instanceof Error ? memoryError.message : String(memoryError);
+      setLogLines((lines) => [...lines, `长期记忆沉淀失败：${message}`]);
     }
   }
 
@@ -843,7 +875,12 @@ function App() {
       setLogLines((lines) => [...lines, "真实流程需要在 Tauri 客户端中运行；浏览器预览只能查看界面。"]);
       return;
     }
-    const enabledSteps = steps.filter((step) => step.enabled !== false);
+    const routeDecision = recommendWorkflowForTask(task, workflows, activeWorkflowId);
+    const selectedWorkflow = routeDecision.workflow;
+    const enabledSteps = selectedWorkflow.steps.filter((step) => step.enabled !== false);
+    if (selectedWorkflow.id !== activeWorkflowId && routeDecision.confidence !== "low") {
+      setActiveWorkflowId(selectedWorkflow.id);
+    }
     setInspectorView("output");
     setError("");
     const workflowStart = Date.now();
@@ -855,8 +892,8 @@ function App() {
     setCurrentActivity("ORCH 实时巡检中");
     const approvalSummary = workflowApprovalSummary(enabledSteps);
     const attachmentLine = attachments.length > 0 ? `\n附件：${attachments.map((item) => item.name).join("、")}` : "";
-    setChatLines((lines) => [...lines, `你：${task}${attachmentLine}`, "ORCH：收到任务，正在读取流程配置。", `ORCH：当前工作流：${activeWorkflow?.name ?? "未命名流程"}（${enabledSteps.length} 个节点）。`, `ORCH：${approvalSummary}`, `ORCH：启用实时巡检，节点完成后立即推进。`]);
-    setLogLines((lines) => [...lines, "> start_workflow real", `用户任务：${task}`, `当前工作流：${activeWorkflow?.name ?? "未命名流程"} / ${enabledSteps.length} 个节点`, approvalSummary, `巡检模式：实时巡检 / 节点完成即推进`, `ORCH：读取流程配置，准备顺序调度 ${enabledSteps.length} 个节点。`]);
+    setChatLines((lines) => [...lines, `你：${task}${attachmentLine}`, "ORCH：收到任务，正在读取流程配置。", `ORCH：动态路由选择：${selectedWorkflow.name}（${routeDecision.confidence}，${routeDecision.reason}）`, `ORCH：当前工作流：${selectedWorkflow.name}（${enabledSteps.length} 个节点）。`, `ORCH：${approvalSummary}`, `ORCH：启用实时巡检，节点完成后立即推进。`]);
+    setLogLines((lines) => [...lines, "> start_workflow real", `用户任务：${task}`, `动态路由：${selectedWorkflow.name} / ${routeDecision.confidence} / ${routeDecision.reason}`, `当前工作流：${selectedWorkflow.name} / ${enabledSteps.length} 个节点`, approvalSummary, `巡检模式：实时巡检 / 节点完成即推进`, `ORCH：读取流程配置，准备顺序调度 ${enabledSteps.length} 个节点。`]);
     const archive = await tryStartTaskArchive(task);
     let attachmentContext = "";
     try {
@@ -867,7 +904,13 @@ function App() {
       return;
     }
     setPendingAttachments([]);
-    const upstream = `用户任务：${task}\n项目上下文：${summary?.context_brief ?? "尚未读取项目上下文。"}\n${workspaceContextBrief()}${attachmentContext ? `\n${attachmentContext}` : ""}`;
+    const projectContext = `${summary?.context_brief ?? "尚未读取项目上下文。"}\n${workspaceContextBrief()}`;
+    const relevantRules = retrieveRelevantMemoryRules(task, projectContext, memoryRules);
+    const memoryContext = buildMemoryContextBlock(relevantRules);
+    if (relevantRules.length > 0) {
+      setLogLines((lines) => [...lines, `长期记忆命中：${relevantRules.map((rule) => rule.title).join("；")}`]);
+    }
+    const upstream = `用户任务：${task}\n项目上下文：${projectContext}\n${memoryContext}${attachmentContext ? `\n${attachmentContext}` : ""}`;
     await continueWorkflow({
       task,
       enabledSteps,
@@ -941,6 +984,9 @@ function App() {
         } : metric));
         setChatLines((lines) => [...lines, `${step.owner}：${step.stage} 节点完成，耗时 ${formatDuration(result.elapsed_ms)}，已通知 ORCH。`, `ORCH：收到 ${step.owner} 产物，准备推进下一节点。`]);
         setLogLines((lines) => [...lines, `${step.owner} -> ORCH: 节点完成`, `返回地址：${result.endpoint}`, `节点统计：耗时 ${formatDuration(result.elapsed_ms)} / input ${result.input_tokens || "未返回"} / output ${result.output_tokens || "未返回"} / total ${result.total_tokens || "未返回"}`, `产物预览：${previewOutput(result.output)}`]);
+        if (step.stage === "Retrospective") {
+          await tryAppendMemoryRule(result.output, runtime.archive, step.stage);
+        }
         runtime = { ...runtime, upstream: nextUpstream, nextIndex: stepIndex + 1 };
         if (step.approval === "user") {
           pausedForApproval = true;

@@ -5,12 +5,14 @@ mod provider_config;
 mod task_archive;
 mod workflow;
 mod workflow_config_store;
+mod memory_rule_store;
 
 use project_registry::RegisteredProject;
 use project_scanner::ProjectSummary;
 use provider_config::{AgentBindingInput, AgentRunInput, AgentRunResult, ProviderConfigInput, ProviderConfigSnapshot, ProviderConnectionResult};
 use serde::Serialize;
 use app_settings::AppSettings;
+use memory_rule_store::{MemoryRuleInput, MemoryRuleSnapshot};
 use task_archive::{ApprovalRecordInput, TaskArchiveFinishInput, TaskArchiveRef, TaskArchiveStartInput, TaskArtifactInput, TaskAttachmentInput, TaskAttachmentSaveResult};
 use workflow_config_store::WorkflowConfigSnapshot;
 use workflow::WorkflowStep;
@@ -146,6 +148,24 @@ fn save_workflow_config(input: WorkflowConfigSnapshot) -> Result<WorkflowConfigS
     workflow_config_store::save_workflows(path, input)
 }
 
+#[tauri::command]
+fn get_memory_rules() -> Result<MemoryRuleSnapshot, String> {
+    let path = memory_rule_store::default_memory_rules_path()?;
+    memory_rule_store::load_memory_rules(path)
+}
+
+#[tauri::command]
+fn save_memory_rules(input: MemoryRuleSnapshot) -> Result<MemoryRuleSnapshot, String> {
+    let path = memory_rule_store::default_memory_rules_path()?;
+    memory_rule_store::save_memory_rules(path, input)
+}
+
+#[tauri::command]
+fn append_memory_rule(input: MemoryRuleInput) -> Result<MemoryRuleSnapshot, String> {
+    let path = memory_rule_store::default_memory_rules_path()?;
+    memory_rule_store::append_memory_rule(path, input)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -171,7 +191,10 @@ pub fn run() {
             record_approval,
             workflow_blueprint,
             get_workflow_config,
-            save_workflow_config
+            save_workflow_config,
+            get_memory_rules,
+            save_memory_rules,
+            append_memory_rule
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
