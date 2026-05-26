@@ -2127,6 +2127,53 @@ body,
   white-space: nowrap;
 }
 
+.orion-suggestions {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0 12px;
+  border: 1px solid #282828;
+  border-radius: 8px;
+  background: #080808;
+  padding: 10px;
+}
+
+.orion-suggestions > header,
+.orion-suggestion > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.orion-suggestions strong,
+.orion-suggestion strong {
+  color: #f4f4f5;
+  font-size: 12px;
+}
+
+.orion-suggestions span,
+.orion-suggestion p,
+.orion-suggestion em,
+.orion-suggestion small {
+  color: #a3a3a3;
+  font-size: 11px;
+  font-style: normal;
+}
+
+.orion-suggestion {
+  display: grid;
+  gap: 4px;
+  border: 1px solid #202020;
+  border-radius: 6px;
+  padding: 7px;
+}
+
+.orion-suggestion.stop,
+.orion-suggestion.rerun_node,
+.orion-suggestion.insert_arch_review {
+  border-color: #3a2a2a;
+}
+
 .attachment-tray {
   display: flex;
   flex-wrap: wrap;

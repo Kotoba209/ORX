@@ -46,6 +46,7 @@ import { applyOrionNodeInstruction, applyOrionPlanModification, parseOrionComman
 import { createOrionActionPlan, draftOrionWorkflow } from "./orionPlanner";
 import { groupOrionActionsByRisk, type OrionAction, type OrionRiskLevel } from "./orionActions";
 import { actionRiskSummary, formatOrionPayloadPreview, highestOrionRisk, isOrionPlanAllowedBySession, orionRiskLabel } from "./orionPermission";
+import { monitorOrionNodeResult, type OrionSuggestedAction } from "./orionRunMonitor";
 
 type ProjectSummary = { root: string; files: ProjectFile[]; source_count: number; test_count: number; important_files: string[]; context_brief: string };
 type RegisteredProject = { id: string; name: string; path: string; source_count: number; test_count: number; context_brief: string; updated_at: number };
@@ -199,6 +200,7 @@ function App() {
   const [clarificationGate, setClarificationGate] = useState<ClarificationGate | null>(null);
   const [orionPendingPlan, setOrionPendingPlan] = useState<OrionPendingPlan | null>(null);
   const [orionSessionAllowedRisk, setOrionSessionAllowedRisk] = useState<OrionRiskLevel | null>(null);
+  const [orionSuggestions, setOrionSuggestions] = useState<OrionSuggestedAction[]>([]);
   const [currentActivity, setCurrentActivity] = useState("");
   const [approvalNote, setApprovalNote] = useState("");
   const [workspaceFiles, setWorkspaceFiles] = useState<ProjectFile[]>([]);
@@ -1069,6 +1071,7 @@ function App() {
     const workflowStart = Date.now();
     setWorkflowStartedAt(workflowStart);
     setWorkflowMetrics([]);
+    setOrionSuggestions([]);
     setTaskArchive(null);
     setApprovalGate(null);
     setClarificationGate(null);
@@ -1200,6 +1203,15 @@ function App() {
         } : metric));
         setChatLines((lines) => [...lines, `${step.owner}：${step.stage} 节点完成，耗时 ${formatDuration(result.elapsed_ms)}，已通知 ORCH。`, `ORCH：收到 ${step.owner} 产物，准备推进下一节点。`]);
         setLogLines((lines) => [...lines, `${step.owner} -> ORCH: 节点完成`, `返回地址：${result.endpoint}`, `节点统计：耗时 ${formatDuration(result.elapsed_ms)} / input ${result.input_tokens || "未返回"} / output ${result.output_tokens || "未返回"} / total ${result.total_tokens || "未返回"}`, `产物预览：${previewOutput(result.output)}`]);
+        const suggestions = monitorOrionNodeResult({ task: runtime.task, step, output: result.output });
+        setOrionSuggestions((items) => [...suggestions, ...items].slice(0, 8));
+        const activeSuggestions = suggestions.filter((suggestion) => suggestion.kind !== "continue");
+        if (activeSuggestions.length > 0) {
+          setChatLines((lines) => [...lines, `ORION：我发现 ${step.owner} / ${step.stage} 可能需要干预：${activeSuggestions.map((suggestion) => suggestion.title).join("；")}。我先只给建议，不会自动执行。`]);
+          setLogLines((lines) => [...lines, ...activeSuggestions.map((suggestion) => `ORION suggestion ${suggestion.kind}: ${suggestion.summary}`)]);
+        } else {
+          setLogLines((lines) => [...lines, `ORION monitor: ${step.owner} / ${step.stage} 建议继续。`]);
+        }
         if (step.stage === "Retrospective") {
           await tryAppendMemoryRule(result.output, runtime.archive, step.stage);
         }
@@ -1507,6 +1519,15 @@ function App() {
             <span>total {workflowTotals.total_tokens || "未返回"}</span>
           </div>
           {orionPendingPlan && renderOrionWorkflowPreview(orionPendingPlan)}
+          {orionSuggestions.length > 0 && <article className="orion-suggestions">
+            <header><strong>ORION Run Monitor</strong><span>{orionSuggestions.length} suggestions</span></header>
+            {orionSuggestions.map((suggestion) => <section className={`orion-suggestion ${suggestion.kind}`} key={suggestion.id}>
+              <div><strong>{suggestion.title}</strong><em>{suggestion.kind}</em></div>
+              <p>{suggestion.summary}</p>
+              <span>{suggestion.targetOwner} / {suggestion.targetStage}</span>
+              <small>{suggestion.reason}</small>
+            </section>)}
+          </article>}
           {approvalGate && <article className="approval-hint"><strong>等待审批</strong><span>{approvalGate.step.owner} / {approvalGate.step.stage}</span><p>审批预览已在中间弹窗打开。</p></article>}
           {clarificationGate && <article className="approval-hint"><strong>等待澄清</strong><span>{clarificationGate.step.owner} / {clarificationGate.step.stage}</span><p>Trellis 正在追问需求，直接回复即可。</p></article>}
           {taskArchive && <p>task archive: {taskArchive.path}</p>}
