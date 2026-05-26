@@ -41,7 +41,8 @@ import {
   type MemoryRule,
 } from "./memoryRules";
 import { createOrionActionPlan, draftOrionWorkflow } from "./orionPlanner";
-import type { OrionAction } from "./orionActions";
+import type { OrionAction, OrionRiskLevel } from "./orionActions";
+import { actionRiskSummary, highestOrionRisk, isOrionPlanAllowedBySession, orionRiskLabel } from "./orionPermission";
 
 type ProjectSummary = { root: string; files: ProjectFile[]; source_count: number; test_count: number; important_files: string[]; context_brief: string };
 type RegisteredProject = { id: string; name: string; path: string; source_count: number; test_count: number; context_brief: string; updated_at: number };
@@ -193,6 +194,7 @@ function App() {
   const [approvalGate, setApprovalGate] = useState<ApprovalGate | null>(null);
   const [clarificationGate, setClarificationGate] = useState<ClarificationGate | null>(null);
   const [orionPendingPlan, setOrionPendingPlan] = useState<OrionPendingPlan | null>(null);
+  const [orionSessionAllowedRisk, setOrionSessionAllowedRisk] = useState<OrionRiskLevel | null>(null);
   const [currentActivity, setCurrentActivity] = useState("");
   const [approvalNote, setApprovalNote] = useState("");
   const [workspaceFiles, setWorkspaceFiles] = useState<ProjectFile[]>([]);
@@ -866,7 +868,7 @@ function App() {
     if (!taskText || workflowRunning) return;
     if (orionPendingPlan) {
       if (/^(同意|执行|确认|保存并运行|approve|yes|y)$/i.test(text)) {
-        await executeOrionPendingPlan(orionPendingPlan);
+        await executeOrionPendingPlan(orionPendingPlan, "text");
         return;
       }
       setOrionPendingPlan(null);
@@ -904,25 +906,56 @@ function App() {
   function createOrionPlan(task: string) {
     const workflow = draftOrionWorkflow(task);
     const actions = createOrionActionPlan(workflow);
-    setOrionPendingPlan({ task, workflow, actions });
+    const plan = { task, workflow, actions };
+    const planRisk = highestOrionRisk(actions);
+    if (isOrionPlanAllowedBySession(orionSessionAllowedRisk, planRisk)) {
+      setInspectorView("output");
+      setChatLines((lines) => [
+        ...lines,
+        `你：@orion ${task}`,
+        `ORION：本会话已允许 ${orionRiskLabel(planRisk)}，将直接创建并运行「${workflow.name}」。`,
+      ]);
+      setLogLines((lines) => [...lines, `ORION session allow: ${planRisk}`, `ORION plan: ${workflow.name}`, ...actions.map((action) => `${action.kind} risk=${action.risk} ${action.summary}`)]);
+      void executeOrionPendingPlan(plan, "session");
+      return;
+    }
+    setOrionPendingPlan(plan);
     setInspectorView("output");
     setChatLines((lines) => [
       ...lines,
       `你：@orion ${task}`,
       `ORION：我建议创建工作流「${workflow.name}」。`,
       `ORION：${workflow.steps.map((step, index) => `${index + 1}. ${step.owner} / ${step.stage}${step.skill_ids?.length ? `（${step.skill_ids.join(", ")}）` : ""}`).join("；")}`,
-      `ORION：准备执行 ${actions.length} 个动作：${actions.map((action) => `${action.kind}[${action.risk}]`).join(" -> ")}。回复“同意”即可保存并运行；回复其他内容会取消这份计划。`,
+      `ORION：准备执行 ${actions.length} 个动作：${actions.map((action) => `${action.kind}[${action.risk}]`).join(" -> ")}。请在输入框上方选择允许、始终允许或驳回。`,
     ]);
     setLogLines((lines) => [...lines, `ORION plan: ${workflow.name}`, ...actions.map((action) => `${action.kind} risk=${action.risk} ${action.summary}`)]);
   }
 
-  async function executeOrionPendingPlan(plan: OrionPendingPlan) {
+  async function approveOrionPendingPlan(alwaysAllowSession: boolean) {
+    if (!orionPendingPlan) return;
+    const planRisk = highestOrionRisk(orionPendingPlan.actions);
+    if (alwaysAllowSession) {
+      setOrionSessionAllowedRisk(planRisk);
+    }
+    await executeOrionPendingPlan(orionPendingPlan, alwaysAllowSession ? "session" : "once");
+  }
+
+  function rejectOrionPendingPlan() {
+    if (!orionPendingPlan) return;
+    setChatLines((lines) => [...lines, "你：驳回", "ORION：已取消这份动作计划。你可以继续输入新的目标或修改意见。"]);
+    setLogLines((lines) => [...lines, `ORION reject: ${orionPendingPlan.workflow.id}`]);
+    setOrionPendingPlan(null);
+    setRequirement("");
+  }
+
+  async function executeOrionPendingPlan(plan: OrionPendingPlan, approvalMode: "once" | "session" | "text" = "text") {
     const nextWorkflows = [...workflows.filter((workflow) => workflow.id !== plan.workflow.id), plan.workflow];
     setWorkflows(nextWorkflows);
     setActiveWorkflowId(plan.workflow.id);
     setOrionPendingPlan(null);
     setRequirement("");
-    setChatLines((lines) => [...lines, "你：同意", `ORION：已保存工作流「${plan.workflow.name}」，现在交给 ORCH Core 执行。`]);
+    const approvalLine = approvalMode === "session" ? "本会话始终允许同类权限" : approvalMode === "once" ? "允许本次" : "同意";
+    setChatLines((lines) => [...lines, `你：${approvalLine}`, `ORION：已保存工作流「${plan.workflow.name}」，现在交给 ORCH Core 执行。`]);
     setLogLines((lines) => [...lines, `ORION execute: saved workflow ${plan.workflow.id}`]);
     await startRealWorkflow(plan.task, [], plan.workflow);
   }
@@ -1287,6 +1320,18 @@ function App() {
           onDragLeave={(event) => { if (event.currentTarget === event.target) setComposerDragActive(false); }}
           onDrop={handleComposerDrop}
         >
+          {orionPendingPlan && <section className="orion-permission-request" aria-label="ORION 权限请求">
+            <header>
+              <strong>ORION 请求：创建并运行工作流</strong>
+              <span>{orionPendingPlan.workflow.name}</span>
+            </header>
+            <p>{orionRiskLabel(highestOrionRisk(orionPendingPlan.actions))} · {actionRiskSummary(orionPendingPlan.actions)}</p>
+            <div className="orion-permission-options">
+              <button type="button" onClick={() => { void approveOrionPendingPlan(true); }}>本会话始终允许同类权限</button>
+              <button type="button" onClick={() => { void approveOrionPendingPlan(false); }}>允许本次</button>
+              <button type="button" className="danger-button" onClick={rejectOrionPendingPlan}>驳回</button>
+            </div>
+          </section>}
           {pendingAttachments.length > 0 && <div className="attachment-tray" aria-label="待发送附件">
             {pendingAttachments.map((attachment) => <div className="attachment-chip" key={attachment.id}>
               <span>{attachment.name}</span>

@@ -1969,6 +1969,45 @@ body,
   background: #0d0d0d;
 }
 
+.orion-permission-request {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 10px;
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  background: #0a0a0a;
+  padding: 10px;
+}
+
+.orion-permission-request header {
+  display: grid;
+  gap: 3px;
+}
+
+.orion-permission-request strong {
+  color: #f5f5f5;
+  font-size: 12px;
+}
+
+.orion-permission-request span,
+.orion-permission-request p {
+  color: #a3a3a3;
+  font-size: 12px;
+}
+
+.orion-permission-options {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 6px;
+}
+
+.orion-permission-options button {
+  justify-content: flex-start;
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+}
+
 .attachment-tray {
   display: flex;
   flex-wrap: wrap;
