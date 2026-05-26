@@ -62,6 +62,10 @@ export function trimWorkflowContext(context: string) {
   return `${context.slice(0, 4_000)}\n\n[中间上下文已压缩，保留最近节点产物]\n\n${context.slice(-7_600)}`;
 }
 
+export function shouldStopWorkflow(stopRef: { current: boolean }) {
+  return stopRef.current;
+}
+
 export function isApproveCommand(value: string) {
   return /^(同意|批准|通过|继续|approve|approved|continue|yes|y)$/i.test(value.trim());
 }

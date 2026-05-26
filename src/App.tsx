@@ -1,5 +1,6 @@
 ﻿import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { useRef } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import "./App.css";
 import {
@@ -9,6 +10,7 @@ import {
   nextRuntimeAfterRejection,
   outputHasFileArtifact,
   parseApprovalInput,
+  shouldStopWorkflow,
   stepShouldProduceFileArtifact,
   taskLikelyNeedsFileArtifact,
   trimWorkflowContext,
@@ -187,6 +189,7 @@ function App() {
   const [conversations, setConversations] = useState<ConversationSession[]>([]);
   const [workflowMenuOpen, setWorkflowMenuOpen] = useState(false);
   const [workflowRunning, setWorkflowRunning] = useState(false);
+  const workflowStopRequestedRef = useRef(false);
   const [chatLines, setChatLines] = useState<string[]>(["ORCH：等待任务。"]);
   const [logLines, setLogLines] = useState<string[]>(["codex-workflow-client started", "等待添加本地项目。"]); 
   const [workflowMetrics, setWorkflowMetrics] = useState<WorkflowMetric[]>([]);
@@ -866,6 +869,10 @@ function App() {
     const text = requirement.trim();
     const attachments = pendingAttachments;
     const taskText = text || (attachments.length > 0 ? "请读取并处理我发送的附件。" : "");
+    if (workflowRunning) {
+      requestStopWorkflow();
+      return;
+    }
     if (!taskText || workflowRunning) return;
     if (orionPendingPlan) {
       await handleOrionConversationCommand(text, true);
@@ -1025,6 +1032,13 @@ function App() {
     }
   }
 
+  function requestStopWorkflow() {
+    workflowStopRequestedRef.current = true;
+    setCurrentActivity("正在终止当前流程");
+    setChatLines((lines) => [...lines, "你：终止流程", "ORCH：已收到终止请求。当前节点如果已经发出，会在返回后停止后续节点。"]);
+    setLogLines((lines) => [...lines, "用户请求终止当前流程。"]);
+  }
+
   function handleComposerPaste(event: React.ClipboardEvent<HTMLTextAreaElement>) {
     const files = event.clipboardData.files;
     if (files.length > 0) void addAttachmentFiles(files);
@@ -1041,6 +1055,7 @@ function App() {
       setLogLines((lines) => [...lines, "真实流程需要在 Tauri 客户端中运行；浏览器预览只能查看界面。"]);
       return;
     }
+    workflowStopRequestedRef.current = false;
     const routeDecision = workflowOverride
       ? { workflow: workflowOverride, confidence: "high" as const, reason: "ORION 已确认并保存该工作流。", matchedKind: "current" as const }
       : recommendWorkflowForTask(task, workflows, activeWorkflowId);
@@ -1099,8 +1114,13 @@ function App() {
     let activeStep: WorkflowStep | null = null;
     let pausedForApproval = false;
     let pausedForClarification = false;
+    let stoppedByUser = false;
     try {
       for (let stepIndex = runtime.nextIndex; stepIndex < runtime.enabledSteps.length; stepIndex += 1) {
+        if (shouldStopWorkflow(workflowStopRequestedRef)) {
+          stoppedByUser = true;
+          break;
+        }
         const step = runtime.enabledSteps[stepIndex];
         activeStep = step;
         const role = ownerToRole(step.owner);
@@ -1184,6 +1204,10 @@ function App() {
           await tryAppendMemoryRule(result.output, runtime.archive, step.stage);
         }
         runtime = { ...runtime, upstream: nextUpstream, nextIndex: stepIndex + 1 };
+        if (shouldStopWorkflow(workflowStopRequestedRef)) {
+          stoppedByUser = true;
+          break;
+        }
         if (step.approval === "user") {
           pausedForApproval = true;
           setWorkflowRunning(false);
@@ -1197,6 +1221,14 @@ function App() {
         }
       }
       const wallElapsed = Date.now() - runtime.workflowStart;
+      if (stoppedByUser) {
+        const stoppedAt = activeStep ? `${activeStep.owner} / ${activeStep.stage}` : "等待下一个节点";
+        const summaryText = `# Retrospective\n\n- 状态: stopped\n- 停止位置: ${stoppedAt}\n- 总耗时: ${formatDuration(wallElapsed)}\n- 节点累计耗时: ${formatDuration(runtime.runTotals.elapsed_ms)}\n\nORCH：用户手动终止流程，后续节点未继续推进。\n`;
+        await tryFinishTaskArchive(runtime.archive, "stopped", wallElapsed, runtime.runTotals, summaryText);
+        setChatLines((lines) => [...lines, `ORCH：流程已终止，停止位置：${stoppedAt}。`]);
+        setLogLines((lines) => [...lines, `流程已由用户终止：${stoppedAt}`]);
+        return;
+      }
       const summaryText = `# Retrospective\n\n- 状态: completed\n- 总耗时: ${formatDuration(wallElapsed)}\n- 节点累计耗时: ${formatDuration(runtime.runTotals.elapsed_ms)}\n- input tokens: ${runtime.runTotals.input_tokens || "未返回"}\n- output tokens: ${runtime.runTotals.output_tokens || "未返回"}\n- total tokens: ${runtime.runTotals.total_tokens || "未返回"}\n\nORCH：全部流程节点已完成，PM 已按规则完成总结归纳。\n`;
       await tryFinishTaskArchive(runtime.archive, "completed", wallElapsed, runtime.runTotals, summaryText);
       setChatLines((lines) => [...lines, `ORCH：全部流程节点已完成，总耗时 ${formatDuration(wallElapsed)}，PM 已按规则完成总结归纳。`]);
@@ -1214,6 +1246,7 @@ function App() {
       await tryFinishTaskArchive(runtime.archive, "failed", wallElapsed, runtime.runTotals, `# Retrospective\n\n- 状态: failed\n- 失败节点: ${failedAt}\n- 总耗时: ${formatDuration(wallElapsed)}\n\n${message}\n`);
     } finally {
       setWorkflowRunning(false);
+      workflowStopRequestedRef.current = false;
       if (!pausedForApproval && !pausedForClarification) setCurrentActivity("");
     }
   }
@@ -1458,7 +1491,7 @@ function App() {
                 {workflows.map((workflow) => <button type="button" role="option" aria-selected={activeWorkflowId === workflow.id} key={workflow.id} onClick={() => { setActiveWorkflowId(workflow.id); setWorkflowMenuOpen(false); }}>{workflow.name}{workflow.isDefault ? " · 默认" : ""}</button>)}
               </div>}
             </div>
-            <button type="submit" aria-label={approvalGate ? "提交审批意见" : clarificationGate ? "提交澄清回答" : "启动工作流"} disabled={workflowRunning}>↑</button>
+            <button type="submit" className={workflowRunning ? "stop-workflow-button" : ""} aria-label={workflowRunning ? "终止当前流程" : approvalGate ? "提交审批意见" : clarificationGate ? "提交澄清回答" : "启动工作流"} title={workflowRunning ? "终止当前流程" : "启动工作流"}>{workflowRunning ? "■" : "↑"}</button>
           </div>
         </form>
       </section>

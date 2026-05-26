@@ -10,6 +10,7 @@ import {
   nextRuntimeAfterRejection,
   outputHasFileArtifact,
   parseApprovalInput,
+  shouldStopWorkflow,
   stepShouldProduceFileArtifact,
   taskLikelyNeedsFileArtifact,
   type ApprovalGateState,
@@ -146,6 +147,11 @@ test("workflow runtime state accumulates elapsed time and tokens", () => {
   };
 
   assert.deepEqual(state.runTotals, { elapsed_ms: 100, input_tokens: 10, output_tokens: 20, total_tokens: 30 });
+});
+
+test("workflow stop flag prevents continuing later nodes", () => {
+  assert.equal(shouldStopWorkflow({ current: true }), true);
+  assert.equal(shouldStopWorkflow({ current: false }), false);
 });
 
 test("headless full workflow supports approve and reject branches before QA completion", () => {

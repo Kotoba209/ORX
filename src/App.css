@@ -2217,6 +2217,16 @@ body,
   background: #303034;
 }
 
+.composer-toolbar > button.stop-workflow-button {
+  border-color: #6f2a2a;
+  background: #2b1717;
+  color: #ffb4b4;
+}
+
+.composer-toolbar > button.stop-workflow-button:hover {
+  background: #3a1d1d;
+}
+
 .stats span,
 .workspace-files button,
 .tree-row {
