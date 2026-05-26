@@ -13,6 +13,7 @@ export type OrionConversationCommand =
   | { type: "list_actions" }
   | { type: "explain_permission" }
   | { type: "modify_plan"; modification: OrionPlanModification; note: string }
+  | { type: "node_instruction"; targetOwner: string; note: string }
   | { type: "unknown"; text: string };
 
 export type OrionCommandPlan = {
@@ -36,6 +37,10 @@ export function parseOrionCommand(text: string, hasPendingPlan: boolean): OrionC
   if (/(列出动作|动作列表|action plan|actions)/i.test(normalized)) return { type: "list_actions" };
   if (/(为什么.*权限|权限.*为什么|需要权限)/.test(normalized)) return { type: "explain_permission" };
 
+  const nodeInstructionTarget = parseNodeInstructionTarget(normalized);
+  if (nodeInstructionTarget) {
+    return { type: "node_instruction", targetOwner: nodeInstructionTarget, note: normalized };
+  }
   if (/(只保存|不要运行|不运行|别运行|仅保存)/.test(normalized)) {
     return { type: "modify_plan", modification: "save_only", note: normalized };
   }
@@ -45,8 +50,32 @@ export function parseOrionCommand(text: string, hasPendingPlan: boolean): OrionC
   if (/(先问|先澄清|需求澄清|问我需求|trellis)/i.test(normalized)) {
     return { type: "modify_plan", modification: "add_clarification", note: normalized };
   }
+  const targetOwner = parseTargetOwner(normalized);
+  if (targetOwner) {
+    return { type: "node_instruction", targetOwner, note: normalized };
+  }
 
   return { type: "unknown", text: normalized };
+}
+
+export function applyOrionNodeInstruction(plan: OrionCommandPlan, targetOwner: string, note: string): OrionCommandPlan {
+  const workflow = {
+    ...plan.workflow,
+    steps: plan.workflow.steps.map((workflowStep) => {
+      if (!ownerMatches(workflowStep.owner, targetOwner)) return { ...workflowStep };
+      const notes = [...(workflowStep.orion_notes ?? []), note];
+      return {
+        ...workflowStep,
+        instruction: appendInstructionNote(workflowStep.instruction, note),
+        orion_notes: notes,
+      };
+    }),
+  };
+  return {
+    ...plan,
+    workflow,
+    actions: prependUpdateAction(plan.actions, workflow, `向 ${targetOwner} 转交 ORION 节点指令`),
+  };
 }
 
 export function applyOrionPlanModification(plan: OrionCommandPlan, modification: OrionPlanModification): OrionCommandPlan {
@@ -104,6 +133,29 @@ function syncWorkflowPayloads(actions: OrionAction[], workflow: WorkflowDefiniti
 
 function cloneWorkflow(workflow: WorkflowDefinition): WorkflowDefinition {
   return { ...workflow, steps: workflow.steps.map((item) => ({ ...item })) };
+}
+
+function parseTargetOwner(text: string) {
+  if (/(开发|DEV|developer)/i.test(text)) return "DEV Agent";
+  if (/(产品|需求|PD|prd)/i.test(text)) return "PD Agent";
+  if (/(测试|QA|回归)/i.test(text)) return "QA Agent";
+  if (/(架构|ARCH|code review|codereview|代码审查|代码审核)/i.test(text)) return "ARCH Agent";
+  if (/(PM|流程|项目经理)/i.test(text)) return "PM Agent";
+  return "";
+}
+
+function parseNodeInstructionTarget(text: string) {
+  if (!/(让|提醒|告诉|要求|交代|转告)/.test(text)) return "";
+  return parseTargetOwner(text);
+}
+
+function ownerMatches(owner: string, targetOwner: string) {
+  return owner === targetOwner || owner.toLowerCase().includes(targetOwner.split(" ")[0].toLowerCase());
+}
+
+function appendInstructionNote(instruction: string, note: string) {
+  if (instruction.includes(note)) return instruction;
+  return `${instruction}\n\n[ORION 转交给本节点的补充指令]\n- ${note}`;
 }
 
 function step(stage: string, owner: string, instruction: string, skillIds?: string[]): WorkflowStep {

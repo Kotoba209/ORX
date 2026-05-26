@@ -40,7 +40,7 @@ import {
   retrieveRelevantMemoryRules,
   type MemoryRule,
 } from "./memoryRules";
-import { applyOrionPlanModification, parseOrionCommand, type OrionPlanModification } from "./orionCommands";
+import { applyOrionNodeInstruction, applyOrionPlanModification, parseOrionCommand, type OrionPlanModification } from "./orionCommands";
 import { createOrionActionPlan, draftOrionWorkflow } from "./orionPlanner";
 import { groupOrionActionsByRisk, type OrionAction, type OrionRiskLevel } from "./orionActions";
 import { actionRiskSummary, formatOrionPayloadPreview, highestOrionRisk, isOrionPlanAllowedBySession, orionRiskLabel } from "./orionPermission";
@@ -948,6 +948,10 @@ function App() {
       modifyOrionPendingPlan(command.modification, command.note);
       return;
     }
+    if (command.type === "node_instruction") {
+      addOrionNodeInstruction(command.targetOwner, command.note);
+      return;
+    }
     if (command.type === "explain_plan") {
       setRequirement("");
       setChatLines((lines) => [...lines, `你：${text}`, `ORION：当前计划是「${orionPendingPlan.workflow.name}」，目标是：${orionPendingPlan.task}`, `ORION：流程步骤：${orionPendingPlan.workflow.steps.map((step, index) => `${index + 1}. ${step.owner} / ${step.stage}`).join("；")}`]);
@@ -977,6 +981,16 @@ function App() {
     const label = modification === "save_only" ? "只保存工作流，不自动运行" : modification === "add_arch_review" ? "加入 ARCH CodeReview" : "加入 Trellis 需求澄清";
     setChatLines((lines) => [...lines, `你：${note}`, `ORION：已修改计划：${label}。右侧预览已更新，你可以继续调整，也可以允许执行。`]);
     setLogLines((lines) => [...lines, `ORION modify: ${modification}`, ...nextPlan.actions.map((action) => `${action.kind} risk=${action.risk} ${action.summary}`)]);
+  }
+
+  function addOrionNodeInstruction(targetOwner: string, note: string) {
+    if (!orionPendingPlan) return;
+    const nextPlan = applyOrionNodeInstruction(orionPendingPlan, targetOwner, note);
+    setOrionPendingPlan(nextPlan);
+    setRequirement("");
+    setInspectorView("output");
+    setChatLines((lines) => [...lines, `你：${note}`, `ORION：已把这条补充指令挂到 ${targetOwner}。等 ORCH 执行到对应节点时，我会转交给该 Agent。`]);
+    setLogLines((lines) => [...lines, `ORION node instruction: ${targetOwner}`, note]);
   }
 
   async function approveOrionPendingPlan(alwaysAllowSession: boolean) {
@@ -1092,6 +1106,8 @@ function App() {
         const role = ownerToRole(step.owner);
         const provider = providerInputForRole(role);
         const endpoint = providerEndpoint(provider);
+        const nodeInstructionContext = orionNodeInstructionContext(step);
+        const stepUpstream = trimWorkflowContext(`${runtime.upstream}${nodeInstructionContext}`);
         const upstreamBeforeStep = runtime.upstream;
         setCurrentActivity(`${step.owner} 处理中`);
         setWorkflowMetrics((metrics) => [...metrics, { stage: step.stage, owner: step.owner, status: "running", elapsed_ms: 0, input_tokens: 0, output_tokens: 0, total_tokens: 0, output_preview: "处理中..." }]);
@@ -1104,13 +1120,13 @@ function App() {
           `代理路线：${provider.use_proxy_route ? provider.proxy_url : "未启用"}`,
         ]);
         const result = await invoke<AgentRunResult>("run_agent", {
-          input: { provider, owner: step.owner, stage: step.stage, task: runtime.task, upstream: runtime.upstream },
+          input: { provider, owner: step.owner, stage: step.stage, task: runtime.task, upstream: stepUpstream },
         });
         runtime.runTotals.elapsed_ms += result.elapsed_ms;
         runtime.runTotals.input_tokens += result.input_tokens;
         runtime.runTotals.output_tokens += result.output_tokens;
         runtime.runTotals.total_tokens += result.total_tokens;
-        const nextUpstream = trimWorkflowContext(`${runtime.upstream}\n\n[${result.owner} / ${result.stage}]\n${result.output}`);
+        const nextUpstream = trimWorkflowContext(`${stepUpstream}\n\n[${result.owner} / ${result.stage}]\n${result.output}`);
         if (stepUsesInteractiveClarification(step)) {
           const clarificationDecision = parseClarificationOutput(result.output);
           runtime = { ...runtime, upstream: nextUpstream, nextIndex: stepIndex + 1 };
@@ -1330,10 +1346,18 @@ function App() {
       </header>
       <p className="orion-preview-task">{plan.task}</p>
       <div className="orion-preview-steps">
-        {plan.workflow.steps.map((step, index) => <p key={`${step.owner}-${step.stage}-${index}`}><span>{index + 1}</span><strong>{step.owner} / {step.stage}</strong><em>{step.skill_ids?.join(", ") || "no skill"}</em></p>)}
+        {plan.workflow.steps.map((step, index) => <div className="orion-preview-step" key={`${step.owner}-${step.stage}-${index}`}>
+          <p><span>{index + 1}</span><strong>{step.owner} / {step.stage}</strong><em>{step.skill_ids?.join(", ") || "no skill"}</em></p>
+          {step.orion_notes?.map((note) => <small key={`${step.owner}-${step.stage}-${note}`}>ORION：{note}</small>)}
+        </div>)}
       </div>
       {renderOrionActionGroups(plan)}
     </article>;
+  }
+
+  function orionNodeInstructionContext(step: WorkflowStep) {
+    if (!step.orion_notes?.length) return "";
+    return `\n\n[ORION 转交给 ${step.owner} / ${step.stage} 的补充指令]\n${step.orion_notes.map((note) => `- ${note}`).join("\n")}`;
   }
 
   return (

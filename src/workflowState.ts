@@ -8,6 +8,7 @@ export type WorkflowStep = {
   skill_ids?: string[];
   interaction?: "single-turn" | "multi-turn";
   exit_condition?: "node_complete" | "requirements_ready";
+  orion_notes?: string[];
 };
 
 export type WorkflowTotals = {

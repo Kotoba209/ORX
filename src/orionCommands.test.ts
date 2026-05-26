@@ -3,6 +3,7 @@ import { test } from "node:test";
 import type { OrionAction } from "./orionActions.ts";
 import { createOrionAction } from "./orionActions.ts";
 import {
+  applyOrionNodeInstruction,
   applyOrionPlanModification,
   parseOrionCommand,
   type OrionCommandPlan,
@@ -65,6 +66,24 @@ test("parses pending plan modification commands", () => {
   });
 });
 
+test("parses node-level instructions for a target agent", () => {
+  assert.deepEqual(parseOrionCommand("让开发 agent 参考 docs/old-prd.md 来做开发", true), {
+    type: "node_instruction",
+    targetOwner: "DEV Agent",
+    note: "让开发 agent 参考 docs/old-prd.md 来做开发",
+  });
+  assert.deepEqual(parseOrionCommand("提醒 QA 重点测移动端", true), {
+    type: "node_instruction",
+    targetOwner: "QA Agent",
+    note: "提醒 QA 重点测移动端",
+  });
+  assert.deepEqual(parseOrionCommand("提醒架构师重点看数据库迁移风险", true), {
+    type: "node_instruction",
+    targetOwner: "ARCH Agent",
+    note: "提醒架构师重点看数据库迁移风险",
+  });
+});
+
 test("save-only modification removes workflow run action", () => {
   const updated = applyOrionPlanModification(plan(), "save_only");
   assert.equal(updated.actions.some((action) => action.kind === "workflow.run"), false);
@@ -88,4 +107,12 @@ test("clarification modification inserts a Trellis clarification step", () => {
   const step = updated.workflow.steps.find((item) => item.stage === "Clarification");
   assert.equal(step?.owner, "PD Agent");
   assert.deepEqual(step?.skill_ids, ["trellis"]);
+});
+
+test("applies ORION node instruction to the matching workflow step", () => {
+  const updated = applyOrionNodeInstruction(plan(), "DEV Agent", "参考 docs/old-prd.md，先写需求再开发");
+  const devStep = updated.workflow.steps.find((step) => step.owner === "DEV Agent");
+  assert.deepEqual(devStep?.orion_notes, ["参考 docs/old-prd.md，先写需求再开发"]);
+  assert.match(devStep?.instruction ?? "", /ORION 转交/);
+  assert.equal(updated.actions.some((action) => action.kind === "workflow.update"), true);
 });
