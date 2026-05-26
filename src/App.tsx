@@ -31,6 +31,7 @@ import { buildFileTree, type FileTreeNode, type ProjectFile } from "./projectTre
 import { toChatTimelineItems } from "./chatTimeline";
 import { createWorkflowStageOptions } from "./workflowStageOptions";
 import { recommendWorkflowForTask } from "./workflowRouter";
+import { shouldBlockRecentlyStoppedTask } from "./workflowRunGuards";
 import {
   nextRuntimeAfterClarificationAnswer,
   parseClarificationOutput,
@@ -191,6 +192,7 @@ function App() {
   const [workflowMenuOpen, setWorkflowMenuOpen] = useState(false);
   const [workflowRunning, setWorkflowRunning] = useState(false);
   const workflowStopRequestedRef = useRef(false);
+  const lastStoppedWorkflowRef = useRef({ task: "", at: 0 });
   const [chatLines, setChatLines] = useState<string[]>(["ORCH：等待任务。"]);
   const [logLines, setLogLines] = useState<string[]>(["codex-workflow-client started", "等待添加本地项目。"]); 
   const [workflowMetrics, setWorkflowMetrics] = useState<WorkflowMetric[]>([]);
@@ -1035,6 +1037,10 @@ function App() {
   }
 
   function requestStopWorkflow() {
+    if (workflowStopRequestedRef.current) {
+      setChatLines((lines) => [...lines, "ORCH：终止请求已记录，正在等待当前节点返回。"]);
+      return;
+    }
     workflowStopRequestedRef.current = true;
     setCurrentActivity("正在终止当前流程");
     setChatLines((lines) => [...lines, "你：终止流程", "ORCH：已收到终止请求。当前节点如果已经发出，会在返回后停止后续节点。"]);
@@ -1055,6 +1061,17 @@ function App() {
   async function startRealWorkflow(task: string, attachments: PendingAttachment[] = [], workflowOverride?: WorkflowDefinition) {
     if (!canUseTauriCommands()) {
       setLogLines((lines) => [...lines, "真实流程需要在 Tauri 客户端中运行；浏览器预览只能查看界面。"]);
+      return;
+    }
+    if (shouldBlockRecentlyStoppedTask({
+      task,
+      lastStoppedTask: lastStoppedWorkflowRef.current.task,
+      lastStoppedAt: lastStoppedWorkflowRef.current.at,
+      now: Date.now(),
+    })) {
+      setRequirement("");
+      setChatLines((lines) => [...lines, `你：${task}`, "ORCH：刚刚已经终止过相同任务，我不会自动重复启动。确实要重跑的话，请输入“重新运行”加任务内容。"]);
+      setLogLines((lines) => [...lines, `重复启动已拦截：${task}`]);
       return;
     }
     workflowStopRequestedRef.current = false;
@@ -1235,6 +1252,7 @@ function App() {
       const wallElapsed = Date.now() - runtime.workflowStart;
       if (stoppedByUser) {
         const stoppedAt = activeStep ? `${activeStep.owner} / ${activeStep.stage}` : "等待下一个节点";
+        lastStoppedWorkflowRef.current = { task: runtime.task, at: Date.now() };
         const summaryText = `# Retrospective\n\n- 状态: stopped\n- 停止位置: ${stoppedAt}\n- 总耗时: ${formatDuration(wallElapsed)}\n- 节点累计耗时: ${formatDuration(runtime.runTotals.elapsed_ms)}\n\nORCH：用户手动终止流程，后续节点未继续推进。\n`;
         await tryFinishTaskArchive(runtime.archive, "stopped", wallElapsed, runtime.runTotals, summaryText);
         setChatLines((lines) => [...lines, `ORCH：流程已终止，停止位置：${stoppedAt}。`]);
