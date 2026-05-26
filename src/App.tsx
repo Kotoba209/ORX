@@ -40,6 +40,7 @@ import {
   retrieveRelevantMemoryRules,
   type MemoryRule,
 } from "./memoryRules";
+import { applyOrionPlanModification, parseOrionCommand, type OrionPlanModification } from "./orionCommands";
 import { createOrionActionPlan, draftOrionWorkflow } from "./orionPlanner";
 import { groupOrionActionsByRisk, type OrionAction, type OrionRiskLevel } from "./orionActions";
 import { actionRiskSummary, formatOrionPayloadPreview, highestOrionRisk, isOrionPlanAllowedBySession, orionRiskLabel } from "./orionPermission";
@@ -867,13 +868,7 @@ function App() {
     const taskText = text || (attachments.length > 0 ? "请读取并处理我发送的附件。" : "");
     if (!taskText || workflowRunning) return;
     if (orionPendingPlan) {
-      if (/^(同意|执行|确认|保存并运行|approve|yes|y)$/i.test(text)) {
-        await executeOrionPendingPlan(orionPendingPlan, "text");
-        return;
-      }
-      setOrionPendingPlan(null);
-      setRequirement("");
-      setChatLines((lines) => [...lines, `你：${text}`, "ORION：已取消上一份动作计划。你可以重新描述目标，我会重新规划。"]);
+      await handleOrionConversationCommand(text, true);
       return;
     }
     if (clarificationGate) {
@@ -894,8 +889,9 @@ function App() {
       setRequirement("");
       return;
     }
-    if (/^@orion\b/i.test(text)) {
-      createOrionPlan(text.replace(/^@orion\b/i, "").trim() || "请 ORION 规划一个工作流。");
+    const orionCommand = parseOrionCommand(text, false);
+    if (orionCommand.type === "create_plan") {
+      createOrionPlan(orionCommand.task);
       setRequirement("");
       return;
     }
@@ -931,6 +927,58 @@ function App() {
     setLogLines((lines) => [...lines, `ORION plan: ${workflow.name}`, ...actions.map((action) => `${action.kind} risk=${action.risk} ${action.summary}`)]);
   }
 
+  async function handleOrionConversationCommand(text: string, hasPendingPlan: boolean) {
+    const command = parseOrionCommand(text, hasPendingPlan);
+    if (!orionPendingPlan) return;
+    if (command.type === "approve_once") {
+      await executeOrionPendingPlan(orionPendingPlan, "text");
+      return;
+    }
+    if (command.type === "approve_session") {
+      const planRisk = highestOrionRisk(orionPendingPlan.actions);
+      setOrionSessionAllowedRisk(planRisk);
+      await executeOrionPendingPlan(orionPendingPlan, "session");
+      return;
+    }
+    if (command.type === "reject") {
+      rejectOrionPendingPlan(text || "驳回");
+      return;
+    }
+    if (command.type === "modify_plan") {
+      modifyOrionPendingPlan(command.modification, command.note);
+      return;
+    }
+    if (command.type === "explain_plan") {
+      setRequirement("");
+      setChatLines((lines) => [...lines, `你：${text}`, `ORION：当前计划是「${orionPendingPlan.workflow.name}」，目标是：${orionPendingPlan.task}`, `ORION：流程步骤：${orionPendingPlan.workflow.steps.map((step, index) => `${index + 1}. ${step.owner} / ${step.stage}`).join("；")}`]);
+      return;
+    }
+    if (command.type === "list_actions") {
+      setRequirement("");
+      setChatLines((lines) => [...lines, `你：${text}`, `ORION：动作列表：${orionPendingPlan.actions.map((action) => `${action.kind}[${action.risk}]`).join(" -> ")}`]);
+      return;
+    }
+    if (command.type === "explain_permission") {
+      setRequirement("");
+      setChatLines((lines) => [...lines, `你：${text}`, `ORION：这份计划最高权限是 ${orionRiskLabel(highestOrionRisk(orionPendingPlan.actions))}，因为它会保存工作流、挂载 capability，${orionPendingPlan.actions.some((action) => action.kind === "workflow.run") ? "并启动 ORCH 执行。" : "但不会自动运行。"}你可以允许本次、始终允许同类权限，或驳回。`]);
+      return;
+    }
+    setOrionPendingPlan(null);
+    setRequirement("");
+    setChatLines((lines) => [...lines, `你：${text}`, "ORION：我还不能可靠地把这句话转成计划修改，所以已取消上一份动作计划。你可以用 @orion 重新描述目标。"]);
+  }
+
+  function modifyOrionPendingPlan(modification: OrionPlanModification, note: string) {
+    if (!orionPendingPlan) return;
+    const nextPlan = applyOrionPlanModification(orionPendingPlan, modification);
+    setOrionPendingPlan(nextPlan);
+    setRequirement("");
+    setInspectorView("output");
+    const label = modification === "save_only" ? "只保存工作流，不自动运行" : modification === "add_arch_review" ? "加入 ARCH CodeReview" : "加入 Trellis 需求澄清";
+    setChatLines((lines) => [...lines, `你：${note}`, `ORION：已修改计划：${label}。右侧预览已更新，你可以继续调整，也可以允许执行。`]);
+    setLogLines((lines) => [...lines, `ORION modify: ${modification}`, ...nextPlan.actions.map((action) => `${action.kind} risk=${action.risk} ${action.summary}`)]);
+  }
+
   async function approveOrionPendingPlan(alwaysAllowSession: boolean) {
     if (!orionPendingPlan) return;
     const planRisk = highestOrionRisk(orionPendingPlan.actions);
@@ -940,9 +988,9 @@ function App() {
     await executeOrionPendingPlan(orionPendingPlan, alwaysAllowSession ? "session" : "once");
   }
 
-  function rejectOrionPendingPlan() {
+  function rejectOrionPendingPlan(inputText = "驳回") {
     if (!orionPendingPlan) return;
-    setChatLines((lines) => [...lines, "你：驳回", "ORION：已取消这份动作计划。你可以继续输入新的目标或修改意见。"]);
+    setChatLines((lines) => [...lines, `你：${inputText}`, "ORION：已取消这份动作计划。你可以继续输入新的目标或修改意见。"]);
     setLogLines((lines) => [...lines, `ORION reject: ${orionPendingPlan.workflow.id}`]);
     setOrionPendingPlan(null);
     setRequirement("");
@@ -955,9 +1003,12 @@ function App() {
     setOrionPendingPlan(null);
     setRequirement("");
     const approvalLine = approvalMode === "session" ? "本会话始终允许同类权限" : approvalMode === "once" ? "允许本次" : "同意";
-    setChatLines((lines) => [...lines, `你：${approvalLine}`, `ORION：已保存工作流「${plan.workflow.name}」，现在交给 ORCH Core 执行。`]);
+    const shouldRun = plan.actions.some((action) => action.kind === "workflow.run");
+    setChatLines((lines) => [...lines, `你：${approvalLine}`, shouldRun ? `ORION：已保存工作流「${plan.workflow.name}」，现在交给 ORCH Core 执行。` : `ORION：已保存工作流「${plan.workflow.name}」，不会自动运行。`]);
     setLogLines((lines) => [...lines, `ORION execute: saved workflow ${plan.workflow.id}`]);
-    await startRealWorkflow(plan.task, [], plan.workflow);
+    if (shouldRun) {
+      await startRealWorkflow(plan.task, [], plan.workflow);
+    }
   }
 
   function handleComposerPaste(event: React.ClipboardEvent<HTMLTextAreaElement>) {
@@ -1365,7 +1416,7 @@ function App() {
             <div className="orion-permission-options">
               <button type="button" onClick={() => { void approveOrionPendingPlan(true); }}>本会话始终允许同类权限</button>
               <button type="button" onClick={() => { void approveOrionPendingPlan(false); }}>允许本次</button>
-              <button type="button" className="danger-button" onClick={rejectOrionPendingPlan}>驳回</button>
+              <button type="button" className="danger-button" onClick={() => rejectOrionPendingPlan()}>驳回</button>
             </div>
           </section>}
           {pendingAttachments.length > 0 && <div className="attachment-tray" aria-label="待发送附件">
