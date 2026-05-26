@@ -3,6 +3,7 @@ import { test } from "node:test";
 import type { OrionAction } from "./orionActions.ts";
 import {
   actionRiskSummary,
+  formatOrionPayloadPreview,
   highestOrionRisk,
   isOrionPlanAllowedBySession,
   orionRiskLabel,
@@ -41,4 +42,22 @@ test("labels risks in Chinese for the composer", () => {
   assert.equal(orionRiskLabel("direct"), "直接执行");
   assert.equal(orionRiskLabel("confirm"), "需要确认");
   assert.equal(orionRiskLabel("strong-confirm"), "强确认");
+});
+
+test("formats compact ORION payload preview rows", () => {
+  assert.deepEqual(formatOrionPayloadPreview({ message: "release", count: 2 }), [
+    ["message", "release"],
+    ["count", "2"],
+  ]);
+});
+
+test("summarizes nested ORION payload values", () => {
+  assert.deepEqual(formatOrionPayloadPreview({ workflow: { id: "wf" }, files: ["a.ts", "b.ts"] }), [
+    ["workflow", "{...}"],
+    ["files", "a.ts, b.ts"],
+  ]);
+});
+
+test("returns a fallback row for empty ORION payload", () => {
+  assert.deepEqual(formatOrionPayloadPreview({}), [["参数", "等待执行前生成具体参数"]]);
 });

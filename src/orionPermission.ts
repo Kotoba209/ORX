@@ -40,3 +40,19 @@ export function actionRiskSummary(actions: OrionAction[]) {
 export function orionRiskLabel(risk: OrionRiskLevel) {
   return riskLabels[risk];
 }
+
+export function formatOrionPayloadPreview(payload: Record<string, unknown>) {
+  const entries = Object.entries(payload);
+  if (entries.length === 0) {
+    return [["参数", "等待执行前生成具体参数"]];
+  }
+  return entries.map(([key, value]) => {
+    if (Array.isArray(value)) {
+      return [key, value.map((item) => String(item)).join(", ") || "[]"];
+    }
+    if (value && typeof value === "object") {
+      return [key, "{...}"];
+    }
+    return [key, String(value)];
+  });
+}

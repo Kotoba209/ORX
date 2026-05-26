@@ -41,8 +41,8 @@ import {
   type MemoryRule,
 } from "./memoryRules";
 import { createOrionActionPlan, draftOrionWorkflow } from "./orionPlanner";
-import type { OrionAction, OrionRiskLevel } from "./orionActions";
-import { actionRiskSummary, highestOrionRisk, isOrionPlanAllowedBySession, orionRiskLabel } from "./orionPermission";
+import { groupOrionActionsByRisk, type OrionAction, type OrionRiskLevel } from "./orionActions";
+import { actionRiskSummary, formatOrionPayloadPreview, highestOrionRisk, isOrionPlanAllowedBySession, orionRiskLabel } from "./orionPermission";
 
 type ProjectSummary = { root: string; files: ProjectFile[]; source_count: number; test_count: number; important_files: string[]; context_brief: string };
 type RegisteredProject = { id: string; name: string; path: string; source_count: number; test_count: number; context_brief: string; updated_at: number };
@@ -1249,6 +1249,42 @@ function App() {
     });
   }
 
+  function renderOrionActionPayload(action: OrionAction) {
+    if (action.risk !== "strong-confirm") return null;
+    return <div className="orion-action-payload">
+      {formatOrionPayloadPreview(action.payload).map(([key, value]) => <p key={`${action.id}-${key}`}><span>{key}</span><em>{value}</em></p>)}
+    </div>;
+  }
+
+  function renderOrionActionGroups(plan: OrionPendingPlan) {
+    const grouped = groupOrionActionsByRisk(plan.actions);
+    const groups: OrionRiskLevel[] = ["direct", "confirm", "strong-confirm"];
+    return <div className="orion-action-groups">
+      {groups.map((risk) => grouped[risk].length > 0 && <section className={`orion-action-group ${risk}`} key={risk}>
+        <header><strong>{orionRiskLabel(risk)}</strong><span>{grouped[risk].length} actions</span></header>
+        {grouped[risk].map((action) => <article className="orion-action-row" key={action.id}>
+          <div><strong>{action.kind}</strong><span>{action.title}</span></div>
+          <p>{action.summary}</p>
+          {renderOrionActionPayload(action)}
+        </article>)}
+      </section>)}
+    </div>;
+  }
+
+  function renderOrionWorkflowPreview(plan: OrionPendingPlan) {
+    return <article className="orion-preview">
+      <header>
+        <div><strong>ORION Action Preview</strong><span>{plan.workflow.name}</span></div>
+        <em>{orionRiskLabel(highestOrionRisk(plan.actions))}</em>
+      </header>
+      <p className="orion-preview-task">{plan.task}</p>
+      <div className="orion-preview-steps">
+        {plan.workflow.steps.map((step, index) => <p key={`${step.owner}-${step.stage}-${index}`}><span>{index + 1}</span><strong>{step.owner} / {step.stage}</strong><em>{step.skill_ids?.join(", ") || "no skill"}</em></p>)}
+      </div>
+      {renderOrionActionGroups(plan)}
+    </article>;
+  }
+
   return (
     <main className="app-shell" onClick={() => { setContextMenu(null); setWorkflowMenuOpen(false); }}>
       <aside className="sidebar">
@@ -1362,6 +1398,7 @@ function App() {
             <span>out {workflowTotals.output_tokens || "未返回"}</span>
             <span>total {workflowTotals.total_tokens || "未返回"}</span>
           </div>
+          {orionPendingPlan && renderOrionWorkflowPreview(orionPendingPlan)}
           {approvalGate && <article className="approval-hint"><strong>等待审批</strong><span>{approvalGate.step.owner} / {approvalGate.step.stage}</span><p>审批预览已在中间弹窗打开。</p></article>}
           {clarificationGate && <article className="approval-hint"><strong>等待澄清</strong><span>{clarificationGate.step.owner} / {clarificationGate.step.stage}</span><p>Trellis 正在追问需求，直接回复即可。</p></article>}
           {taskArchive && <p>task archive: {taskArchive.path}</p>}

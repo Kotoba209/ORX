@@ -2008,6 +2008,114 @@ body,
   padding: 8px 10px;
 }
 
+.orion-preview {
+  display: grid;
+  gap: 10px;
+  margin: 10px 0 12px;
+  border: 1px solid #282828;
+  border-radius: 8px;
+  background: #080808;
+  padding: 10px;
+}
+
+.orion-preview > header,
+.orion-action-group > header,
+.orion-action-row > div,
+.orion-action-payload p,
+.orion-preview-steps p {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.orion-preview > header {
+  justify-content: space-between;
+}
+
+.orion-preview > header div,
+.orion-action-group {
+  display: grid;
+  gap: 6px;
+}
+
+.orion-preview strong,
+.orion-action-row strong {
+  color: #f4f4f5;
+  font-size: 12px;
+}
+
+.orion-preview span,
+.orion-preview p,
+.orion-preview em {
+  color: #a3a3a3;
+  font-size: 11px;
+  font-style: normal;
+}
+
+.orion-preview-task {
+  border-left: 2px solid #3a3a3a;
+  padding-left: 8px;
+}
+
+.orion-preview-steps,
+.orion-action-groups {
+  display: grid;
+  gap: 6px;
+}
+
+.orion-preview-steps p {
+  justify-content: space-between;
+  border: 1px solid #222222;
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+
+.orion-preview-steps p span {
+  min-width: 18px;
+  color: #f4f4f5;
+}
+
+.orion-action-group {
+  border-top: 1px solid #222222;
+  padding-top: 8px;
+}
+
+.orion-action-group > header {
+  justify-content: space-between;
+}
+
+.orion-action-row {
+  display: grid;
+  gap: 4px;
+  border: 1px solid #202020;
+  border-radius: 6px;
+  padding: 7px;
+}
+
+.orion-action-row p {
+  white-space: normal;
+}
+
+.orion-action-payload {
+  display: grid;
+  gap: 4px;
+  margin-top: 4px;
+  border-top: 1px solid #222222;
+  padding-top: 6px;
+}
+
+.orion-action-payload p {
+  justify-content: space-between;
+}
+
+.orion-action-payload em {
+  max-width: 170px;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .attachment-tray {
   display: flex;
   flex-wrap: wrap;
