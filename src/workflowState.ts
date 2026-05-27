@@ -53,7 +53,7 @@ export const defaultSteps: WorkflowStep[] = [
   { stage: "TaskSplit", owner: "DEV Agent", instruction: "拆分接口、数据流、实现任务和测试任务。", enabled: true, approval: "auto", rollback_target: "TaskSplit" },
   { stage: "CodeReview", owner: "ARCH Agent", instruction: "对 DEV 产物做代码审查、红蓝质询、架构风险和非功能边界评估，输出可预览 CR 报告。", enabled: true, approval: "user", rollback_target: "TaskSplit" },
   { stage: "TestPlan", owner: "QA Agent", instruction: "优先设计集成测试和端到端测试，记录执行证据。", enabled: true, approval: "none", rollback_target: "TaskSplit" },
-  { stage: "Retrospective", owner: "PM Agent", instruction: "失败归因、追责复盘，并沉淀到 AI 工作宪法。每个任务流程处理完后，总结归纳本轮结论、各节点独立完成情况、交接结果、阻塞/打回点、关键证据和下一轮改进项。", enabled: true, approval: "none" },
+  { stage: "Retrospective", owner: "PM Agent", instruction: "输出交付总结，优先汇总 DEV 做了什么改动、生成了哪些新产物、修改了哪些原有文件；同时输出 QA 做了哪些测试、覆盖了哪些场景、是否全量覆盖、未覆盖项和残留风险；最后给出是否可交付、阻塞项和下一步。流程治理问题只作为补充。", enabled: true, approval: "none" },
 ];
 
 export function trimWorkflowContext(context: string) {
@@ -121,7 +121,7 @@ export function taskLikelyNeedsFileArtifact(task: string) {
 }
 
 export function stepShouldProduceFileArtifact(step: WorkflowStep) {
-  return step.owner.includes("DEV") || step.stage === "TaskSplit";
+  return step.owner.includes("DEV") && !/(TaskSplit|Plan|Design|Analysis|Probe|Clarification)/i.test(step.stage);
 }
 
 export function outputHasFileArtifact(output: string) {

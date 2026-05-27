@@ -48,11 +48,20 @@ import { createPendingMemoryCandidate, updatePendingMemoryCandidate as applyMemo
 import { applyOrionNodeInstruction, applyOrionPlanModification, parseOrionCommand, type OrionPlanModification } from "./orionCommands";
 import { classifyOrionIntent, createOrionActionPlan, createOrionAssistantResponse, draftOrionWorkflow } from "./orionPlanner";
 import { groupOrionActionsByRisk, type OrionAction, type OrionRiskLevel } from "./orionActions";
-import { actionRiskSummary, formatOrionPayloadPreview, highestOrionRisk, isOrionPlanAllowedBySession, orionRiskLabel } from "./orionPermission";
+import { actionRiskSummary, formatOrionPayloadPreview, highestOrionRisk, orionRiskLabel } from "./orionPermission";
 import { monitorOrionNodeResult, type OrionSuggestedAction } from "./orionRunMonitor";
 import { formatWhitelistedCommandResult, shouldStopAfterCommandResult, type WhitelistedCommandResult } from "./orionCommandResults";
 
-type ProjectSummary = { root: string; files: ProjectFile[]; source_count: number; test_count: number; important_files: string[]; context_brief: string };
+type ProjectProfile = {
+  detected_stack: string[];
+  manifest_files: string[];
+  convention_file?: string | null;
+  supplemental_convention_files: string[];
+  architecture_hints: string[];
+  suggested_commands: string[];
+  convention_excerpt?: string | null;
+};
+type ProjectSummary = { root: string; files: ProjectFile[]; source_count: number; test_count: number; important_files: string[]; context_brief: string; project_profile?: ProjectProfile };
 type RegisteredProject = { id: string; name: string; path: string; source_count: number; test_count: number; context_brief: string; updated_at: number };
 type AddProjectResult = { project: RegisteredProject; summary: ProjectSummary };
 type ProviderApiProtocol = "responses" | "anthropic-messages";
@@ -643,6 +652,19 @@ function App() {
     return `指定上下文文件：\n${workspaceFiles.map((file) => `- ${file.path} (${file.kind}, ${file.bytes} bytes)`).join("\n")}\n请 Agent 优先围绕这些文件路径定位需求、方案、开发和测试影响面。`;
   }
 
+  function projectProfileBrief(profile?: ProjectProfile) {
+    if (!profile) return "项目画像：未生成。";
+    const lines = [
+      `项目画像：技术栈 ${profile.detected_stack.length ? profile.detected_stack.join(", ") : "未识别"}`,
+      `主约定文件：${profile.convention_file || "未发现"}`,
+      `补充约定：${profile.supplemental_convention_files.length ? profile.supplemental_convention_files.join(", ") : "未发现"}`,
+      `建议命令：${profile.suggested_commands.length ? profile.suggested_commands.join(", ") : "未推断"}`,
+    ];
+    if (profile.architecture_hints.length) lines.push(`架构提示：${profile.architecture_hints.join("；")}`);
+    if (profile.convention_excerpt) lines.push(`约定摘要：${profile.convention_excerpt}`);
+    return lines.join("\n");
+  }
+
   function attachmentKindFromName(name: string) {
     const ext = name.split(".").pop()?.toLowerCase() ?? "";
     if (["txt", "md", "json", "html", "css", "js", "jsx", "ts", "tsx", "py", "rs", "java", "xml", "yaml", "yml", "toml", "csv", "log"].includes(ext)) return "text";
@@ -991,30 +1013,16 @@ function App() {
     const actions = createOrionActionPlan(workflow);
     const plan = { task, workflow, actions };
     const planRisk = highestOrionRisk(actions);
-    if (isOrionPlanAllowedBySession(orionSessionAllowedRisk, planRisk)) {
-      setInspectorView("output");
-      const allowLine = planRisk === "direct"
-        ? `ORION：已生成工作流「${workflow.name}」，普通规划和运行不需要额外授权，将直接交给 ORCH 执行。`
-        : `ORION：本会话已允许 ${orionRiskLabel(planRisk)}，将直接创建并运行「${workflow.name}」。`;
-      setChatLines((lines) => [
-        ...lines,
-        `你：@orion ${task}`,
-        allowLine,
-      ]);
-      setLogLines((lines) => [...lines, `ORION session allow: ${planRisk}`, `ORION plan: ${workflow.name}`, ...actions.map((action) => `${action.kind} risk=${action.risk} ${action.summary}`)]);
-      void executeOrionPendingPlan(plan, "session");
-      return;
-    }
     setOrionPendingPlan(plan);
     setInspectorView("output");
     setChatLines((lines) => [
       ...lines,
       `你：@orion ${task}`,
-      `ORION：我建议创建工作流「${workflow.name}」。`,
+      `ORION：我已为这个任务拟定工作流草案「${workflow.name}」，先不执行。`,
       `ORION：${workflow.steps.map((step, index) => `${index + 1}. ${step.owner} / ${step.stage}${step.skill_ids?.length ? `（${step.skill_ids.join(", ")}）` : ""}`).join("；")}`,
-      `ORION：准备执行 ${actions.length} 个高权限动作：${actions.map((action) => `${action.kind}[${action.risk}]`).join(" -> ")}。请在输入框上方选择允许、始终允许或驳回。`,
+      `ORION：请审阅后选择“同意并运行”或“只保存工作流”；不合适可以驳回，也可以继续输入要求，例如“加 QA 全量覆盖”“让 DEV 参考某个文件”“先 Trellis 澄清”。`,
     ]);
-    setLogLines((lines) => [...lines, `ORION plan: ${workflow.name}`, ...actions.map((action) => `${action.kind} risk=${action.risk} ${action.summary}`)]);
+    setLogLines((lines) => [...lines, `ORION draft requires user confirmation: ${planRisk}`, `ORION plan: ${workflow.name}`, ...actions.map((action) => `${action.kind} risk=${action.risk} ${action.summary}`)]);
   }
 
   async function handleOrionConversationCommand(text: string, hasPendingPlan: boolean) {
@@ -1025,8 +1033,6 @@ function App() {
       return;
     }
     if (command.type === "approve_session") {
-      const planRisk = highestOrionRisk(orionPendingPlan.actions);
-      setOrionSessionAllowedRisk(planRisk);
       await executeOrionPendingPlan(orionPendingPlan, "session");
       return;
     }
@@ -1054,12 +1060,11 @@ function App() {
     }
     if (command.type === "explain_permission") {
       setRequirement("");
-      setChatLines((lines) => [...lines, `你：${text}`, `ORION：这份计划最高权限是 ${orionRiskLabel(highestOrionRisk(orionPendingPlan.actions))}，因为它会保存工作流、挂载 capability，${orionPendingPlan.actions.some((action) => action.kind === "workflow.run") ? "并启动 ORCH 执行。" : "但不会自动运行。"}你可以允许本次、始终允许同类权限，或驳回。`]);
+      setChatLines((lines) => [...lines, `你：${text}`, `ORION：这份草案最高权限是 ${orionRiskLabel(highestOrionRisk(orionPendingPlan.actions))}，因为同意后会保存工作流、挂载 capability，${orionPendingPlan.actions.some((action) => action.kind === "workflow.run") ? "并启动 ORCH 执行。" : "但不会自动运行。"}我不会在你确认前执行。`]);
       return;
     }
-    setOrionPendingPlan(null);
     setRequirement("");
-    setChatLines((lines) => [...lines, `你：${text}`, "ORION：我还不能可靠地把这句话转成计划修改，所以已取消上一份动作计划。你可以用 @orion 重新描述目标。"]);
+    setChatLines((lines) => [...lines, `你：${text}`, "ORION：我还不能可靠地把这句话转成工作流修改。草案已保留，你可以换一种说法，比如“加 QA 全量覆盖”“不要 QA”“让开发 Agent 参考 docs/old-prd.md”，也可以同意或驳回。"]);
   }
 
   async function handleOrionAssistantCommand(text: string) {
@@ -1083,8 +1088,16 @@ function App() {
     setOrionPendingPlan(nextPlan);
     setRequirement("");
     setInspectorView("output");
-    const label = modification === "save_only" ? "只保存工作流，不自动运行" : modification === "add_arch_review" ? "加入 ARCH CodeReview" : "加入 Trellis 需求澄清";
-    setChatLines((lines) => [...lines, `你：${note}`, `ORION：已修改计划：${label}。右侧预览已更新，你可以继续调整，也可以允许执行。`]);
+    const label = modification === "save_only"
+      ? "只保存工作流，不自动运行"
+      : modification === "add_arch_review"
+        ? "加入 ARCH CodeReview"
+        : modification === "add_clarification"
+          ? "加入 Trellis 需求澄清"
+          : modification === "add_qa"
+            ? "加入 QA 测试覆盖"
+            : "移除 QA 测试节点";
+    setChatLines((lines) => [...lines, `你：${note}`, `ORION：已修改工作流草案：${label}。右侧预览已更新；你可以继续提要求，也可以同意并运行或驳回。`]);
     setLogLines((lines) => [...lines, `ORION modify: ${modification}`, ...nextPlan.actions.map((action) => `${action.kind} risk=${action.risk} ${action.summary}`)]);
   }
 
@@ -1100,10 +1113,6 @@ function App() {
 
   async function approveOrionPendingPlan(alwaysAllowSession: boolean) {
     if (!orionPendingPlan) return;
-    const planRisk = highestOrionRisk(orionPendingPlan.actions);
-    if (alwaysAllowSession) {
-      setOrionSessionAllowedRisk(planRisk);
-    }
     await executeOrionPendingPlan(orionPendingPlan, alwaysAllowSession ? "session" : "once");
   }
 
@@ -1175,6 +1184,10 @@ function App() {
       };
     }
     return { message: `已跳过暂未支持的本机助手动作：${action.kind}`, stop: false };
+  async function saveOrionPendingPlanOnly() {
+    if (!orionPendingPlan) return;
+    const nextPlan = applyOrionPlanModification(orionPendingPlan, "save_only");
+    await executeOrionPendingPlan(nextPlan, "save-only");
   }
 
   function rejectOrionPendingPlan(inputText = "驳回") {
@@ -1185,13 +1198,13 @@ function App() {
     setRequirement("");
   }
 
-  async function executeOrionPendingPlan(plan: OrionPendingPlan, approvalMode: "once" | "session" | "text" = "text") {
+  async function executeOrionPendingPlan(plan: OrionPendingPlan, approvalMode: "once" | "session" | "text" | "save-only" = "text") {
     const nextWorkflows = [...workflows.filter((workflow) => workflow.id !== plan.workflow.id), plan.workflow];
     setWorkflows(nextWorkflows);
     setActiveWorkflowId(plan.workflow.id);
     setOrionPendingPlan(null);
     setRequirement("");
-    const approvalLine = approvalMode === "session" ? "本会话始终允许同类权限" : approvalMode === "once" ? "允许本次" : "同意";
+    const approvalLine = approvalMode === "session" ? "本会话始终允许同类权限" : approvalMode === "once" ? "同意并运行" : approvalMode === "save-only" ? "只保存工作流" : "同意";
     const shouldRun = plan.actions.some((action) => action.kind === "workflow.run");
     setChatLines((lines) => [...lines, `你：${approvalLine}`, shouldRun ? `ORION：已保存工作流「${plan.workflow.name}」，现在交给 ORCH Core 执行。` : `ORION：已保存工作流「${plan.workflow.name}」，不会自动运行。`]);
     setLogLines((lines) => [...lines, `ORION execute: saved workflow ${plan.workflow.id}`]);
@@ -1423,9 +1436,9 @@ function App() {
         setLogLines((lines) => [...lines, `流程已由用户终止：${stoppedAt}`]);
         return;
       }
-      const summaryText = `# Retrospective\n\n- 状态: completed\n- 总耗时: ${formatDuration(wallElapsed)}\n- 节点累计耗时: ${formatDuration(runtime.runTotals.elapsed_ms)}\n- input tokens: ${runtime.runTotals.input_tokens || "未返回"}\n- output tokens: ${runtime.runTotals.output_tokens || "未返回"}\n- total tokens: ${runtime.runTotals.total_tokens || "未返回"}\n\nORCH：全部流程节点已完成，PM 已按规则完成总结归纳。\n`;
+      const summaryText = `# Retrospective\n\n- 状态: completed\n- 总耗时: ${formatDuration(wallElapsed)}\n- 节点累计耗时: ${formatDuration(runtime.runTotals.elapsed_ms)}\n- input tokens: ${runtime.runTotals.input_tokens || "未返回"}\n- output tokens: ${runtime.runTotals.output_tokens || "未返回"}\n- total tokens: ${runtime.runTotals.total_tokens || "未返回"}\n\nORCH：全部流程节点已完成，PM 已按交付总结规则汇总 DEV 改动、产物、原文件修改和 QA 覆盖结论。\n`;
       await tryFinishTaskArchive(runtime.archive, "completed", wallElapsed, runtime.runTotals, summaryText);
-      setChatLines((lines) => [...lines, `ORCH：全部流程节点已完成，总耗时 ${formatDuration(wallElapsed)}，PM 已按规则完成总结归纳。`]);
+      setChatLines((lines) => [...lines, `ORCH：全部流程节点已完成，总耗时 ${formatDuration(wallElapsed)}，PM 已汇总 DEV 改动、产物、原文件修改和 QA 覆盖结论。`]);
       setLogLines((lines) => [...lines, `ORCH：全部流程节点已完成。总耗时 ${formatDuration(wallElapsed)}，节点累计 ${formatDuration(runtime.runTotals.elapsed_ms)}，Token input ${runtime.runTotals.input_tokens || "未返回"} / output ${runtime.runTotals.output_tokens || "未返回"} / total ${runtime.runTotals.total_tokens || "未返回"}。`]);
     } catch (runError) {
       const message = runError instanceof Error ? runError.message : String(runError);
@@ -1568,13 +1581,14 @@ function App() {
   function renderOrionWorkflowPreview(plan: OrionPendingPlan) {
     return <article className="orion-preview">
       <header>
-        <div><strong>ORION Action Preview</strong><span>{plan.workflow.name}</span></div>
+        <div><strong>ORION 工作流草案</strong><span>{plan.workflow.name}</span></div>
         <em>{orionRiskLabel(highestOrionRisk(plan.actions))}</em>
       </header>
       <p className="orion-preview-task">{plan.task}</p>
       <div className="orion-preview-steps">
         {plan.workflow.steps.map((step, index) => <div className="orion-preview-step" key={`${step.owner}-${step.stage}-${index}`}>
           <p><span>{index + 1}</span><strong>{step.owner} / {step.stage}</strong><em>{step.skill_ids?.join(", ") || "no skill"}</em></p>
+          <small>{step.instruction}</small>
           {step.orion_notes?.map((note) => <small key={`${step.owner}-${step.stage}-${note}`}>ORION：{note}</small>)}
         </div>)}
       </div>
@@ -1670,15 +1684,15 @@ function App() {
           onDragLeave={(event) => { if (event.currentTarget === event.target) setComposerDragActive(false); }}
           onDrop={handleComposerDrop}
         >
-          {orionPendingPlan && <section className="orion-permission-request" aria-label="ORION 权限请求">
+          {orionPendingPlan && <section className="orion-permission-request" aria-label="ORION 工作流草案确认">
             <header>
-              <strong>ORION 请求：执行高权限动作</strong>
+              <strong>ORION 工作流草案待确认</strong>
               <span>{orionPendingPlan.workflow.name}</span>
             </header>
-            <p>{orionRiskLabel(highestOrionRisk(orionPendingPlan.actions))} · {actionRiskSummary(orionPendingPlan.actions)}</p>
+            <p>{orionRiskLabel(highestOrionRisk(orionPendingPlan.actions))} · {actionRiskSummary(orionPendingPlan.actions)}。你可以同意、只保存、驳回，或继续输入对 Agent/节点的修改要求。</p>
             <div className="orion-permission-options">
-              <button type="button" onClick={() => { void approveOrionPendingPlan(true); }}>本会话始终允许同类权限</button>
-              <button type="button" onClick={() => { void approveOrionPendingPlan(false); }}>允许本次</button>
+              <button type="button" onClick={() => { void approveOrionPendingPlan(false); }}>同意并运行</button>
+              <button type="button" onClick={() => { void saveOrionPendingPlanOnly(); }}>只保存工作流</button>
               <button type="button" className="danger-button" onClick={() => rejectOrionPendingPlan()}>驳回</button>
             </div>
           </section>}
@@ -1769,7 +1783,7 @@ function App() {
           <h2 className="system-log-title">System Logs</h2>
           {logLines.slice(0, 4).map((line, index) => <p key={`system-${line}-${index}`}>{line}</p>)}
         </section>}
-        {inspectorView === "context" && <section className="panel inspector-card"><h2>上下文摘要</h2><p>{summary?.context_brief ?? "添加项目后，这里展示 README、manifest、源码和测试文件摘要。"}</p><div className="stats"><span>src {summary?.source_count ?? 0}</span><span>test {summary?.test_count ?? 0}</span><span>workspace {workspaceFiles.length}</span></div>{workspaceFiles.length > 0 && <div className="workspace-files"><h3>工作区上下文</h3>{workspaceFiles.map((file) => <button type="button" key={file.path} onClick={() => removeFileFromWorkspace(file.path)} title="点击移出工作区"><span>{file.path}</span><em>移出</em></button>)}</div>}</section>}
+        {inspectorView === "context" && <section className="panel inspector-card"><h2>上下文摘要</h2><p>{summary?.context_brief ?? "添加项目后，这里展示 README、manifest、源码和测试文件摘要。"}</p>{summary?.project_profile && <div className="project-profile"><h3>项目画像</h3><p>{projectProfileBrief(summary.project_profile)}</p></div>}<div className="stats"><span>src {summary?.source_count ?? 0}</span><span>test {summary?.test_count ?? 0}</span><span>workspace {workspaceFiles.length}</span></div>{workspaceFiles.length > 0 && <div className="workspace-files"><h3>工作区上下文</h3>{workspaceFiles.map((file) => <button type="button" key={file.path} onClick={() => removeFileFromWorkspace(file.path)} title="点击移出工作区"><span>{file.path}</span><em>移出</em></button>)}</div>}</section>}
         {inspectorView === "files" && <section className="panel inspector-card file-list"><h2>项目文件</h2><p>右键文件或文件夹加入工作区，双击文件快速加入。</p>{fileTree.length === 0 ? <p>等待扫描。</p> : <div className="file-tree">{renderFileTree(fileTree)}</div>}</section>}
       </aside>
 
@@ -1891,3 +1905,4 @@ function App() {
 }
 
 export default App;
+

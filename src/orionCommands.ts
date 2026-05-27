@@ -2,7 +2,7 @@ import { createOrionAction, type OrionAction } from "./orionActions.ts";
 import type { WorkflowDefinition } from "./workflowConfig.ts";
 import type { WorkflowStep } from "./workflowState.ts";
 
-export type OrionPlanModification = "save_only" | "add_arch_review" | "add_clarification";
+export type OrionPlanModification = "save_only" | "add_arch_review" | "add_clarification" | "add_qa" | "remove_qa";
 
 export type OrionConversationCommand =
   | { type: "create_plan"; task: string }
@@ -37,18 +37,24 @@ export function parseOrionCommand(text: string, hasPendingPlan: boolean): OrionC
   if (/(列出动作|动作列表|action plan|actions)/i.test(normalized)) return { type: "list_actions" };
   if (/(为什么.*权限|权限.*为什么|需要权限)/.test(normalized)) return { type: "explain_permission" };
 
+  if (/(只保存|不要运行|不运行|别运行|仅保存)/.test(normalized)) {
+    return { type: "modify_plan", modification: "save_only", note: normalized };
+  }
   const nodeInstructionTarget = parseNodeInstructionTarget(normalized);
   if (nodeInstructionTarget) {
     return { type: "node_instruction", targetOwner: nodeInstructionTarget, note: normalized };
-  }
-  if (/(只保存|不要运行|不运行|别运行|仅保存)/.test(normalized)) {
-    return { type: "modify_plan", modification: "save_only", note: normalized };
   }
   if (/(架构师|ARCH|code review|codereview|代码审查|代码审核|CR)/i.test(normalized)) {
     return { type: "modify_plan", modification: "add_arch_review", note: normalized };
   }
   if (/(先问|先澄清|需求澄清|问我需求|trellis)/i.test(normalized)) {
     return { type: "modify_plan", modification: "add_clarification", note: normalized };
+  }
+  if (/(不要|不用|去掉|删除|移除|不需要).*(QA|测试|回归)/i.test(normalized) || /(QA|测试|回归).*(不要|不用|去掉|删除|移除|不需要)/i.test(normalized)) {
+    return { type: "modify_plan", modification: "remove_qa", note: normalized };
+  }
+  if (/(加|加上|加入|增加|需要|必须|保留).*(QA|测试|回归|全量覆盖)/i.test(normalized) || /(QA|测试|回归|全量覆盖).*(加|加上|加入|增加|需要|必须|保留)/i.test(normalized)) {
+    return { type: "modify_plan", modification: "add_qa", note: normalized };
   }
   const targetOwner = parseTargetOwner(normalized);
   if (targetOwner) {
@@ -102,6 +108,33 @@ export function applyOrionPlanModification(plan: OrionCommandPlan, modification:
     };
   }
 
+  if (modification === "add_qa") {
+    const hasQa = plan.workflow.steps.some((step) => step.owner === "QA Agent" || /Test|QA|回归|测试/i.test(step.stage));
+    const workflow = hasQa ? cloneWorkflow(plan.workflow) : {
+      ...plan.workflow,
+      steps: insertBeforeRetrospective(plan.workflow.steps, step("TestPlan", "QA Agent", "设计并执行测试计划，明确覆盖场景、是否全量覆盖、未覆盖项和残留风险。", ["test-planning"])),
+    };
+    return {
+      ...plan,
+      workflow,
+      actions: prependUpdateAction(plan.actions, workflow, "加入 QA 测试覆盖节点"),
+    };
+  }
+
+  if (modification === "remove_qa") {
+    const workflow = {
+      ...plan.workflow,
+      steps: plan.workflow.steps
+        .filter((workflowStep) => workflowStep.owner !== "QA Agent" && !/Test|QA|回归|测试/i.test(workflowStep.stage))
+        .map((workflowStep) => ({ ...workflowStep })),
+    };
+    return {
+      ...plan,
+      workflow,
+      actions: prependUpdateAction(plan.actions.filter((action) => action.kind !== "skill.attach" || !String(action.summary).includes("QA Agent")), workflow, "移除 QA 测试节点"),
+    };
+  }
+
   const hasClarification = plan.workflow.steps.some((step) => step.stage === "Clarification" || step.stage === "BugClarification");
   const workflow = hasClarification ? cloneWorkflow(plan.workflow) : {
     ...plan.workflow,
@@ -115,6 +148,13 @@ export function applyOrionPlanModification(plan: OrionCommandPlan, modification:
     workflow,
     actions: prependUpdateAction(plan.actions, workflow, "加入 Trellis 需求澄清节点"),
   };
+}
+
+function insertBeforeRetrospective(steps: WorkflowStep[], newStep: WorkflowStep) {
+  const cloned = steps.map((workflowStep) => ({ ...workflowStep }));
+  const retrospectiveIndex = cloned.findIndex((workflowStep) => workflowStep.stage === "Retrospective");
+  if (retrospectiveIndex < 0) return [...cloned, newStep];
+  return [...cloned.slice(0, retrospectiveIndex), newStep, ...cloned.slice(retrospectiveIndex)];
 }
 
 function prependUpdateAction(actions: OrionAction[], workflow: WorkflowDefinition, summary: string) {

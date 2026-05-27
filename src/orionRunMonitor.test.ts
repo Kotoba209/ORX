@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { monitorOrionNodeResult } from "./orionRunMonitor.ts";
 import type { WorkflowStep } from "./workflowState.ts";
 
-const devStep: WorkflowStep = { stage: "TaskSplit", owner: "DEV Agent", instruction: "实现功能", enabled: true };
+const devStep: WorkflowStep = { stage: "Implementation", owner: "DEV Agent", instruction: "实现功能", enabled: true };
 const pdStep: WorkflowStep = { stage: "ScenarioRehearsal", owner: "PD Agent", instruction: "输出需求", enabled: true };
 const qaStep: WorkflowStep = { stage: "TestPlan", owner: "QA Agent", instruction: "测试计划", enabled: true };
 

@@ -119,23 +119,22 @@ test("approval input can carry optional review notes", () => {
   });
 });
 
-test("code tasks require DEV file artifacts before QA can be meaningful", () => {
-  const devStep = defaultSteps.find((step) => step.stage === "TaskSplit");
-  assert.ok(devStep);
+test("code tasks require DEV implementation artifacts before QA can be meaningful", () => {
+  const devStep = { ...defaultSteps.find((step) => step.stage === "TaskSplit")!, stage: "Implementation" };
   assert.equal(taskLikelyNeedsFileArtifact("做一个表单的 html 文件"), true);
   assert.equal(stepShouldProduceFileArtifact(devStep), true);
   assert.equal(outputHasFileArtifact("这里只是方案，没有实际文件"), false);
   assert.equal(outputHasFileArtifact("```html\n<!-- FILE: index.html -->\n<form></form>\n```"), true);
 });
 
-test("attachment-derived code requirements trigger DEV file artifact gate", () => {
+test("task split does not require a file artifact before implementation", () => {
   const devStep = defaultSteps.find((step) => step.stage === "TaskSplit");
   assert.ok(devStep);
   const userTask = "请读取并处理我发送的附件。";
   const upstream = "附件 OCR：做一个 form 表单的 HTML 文件，保存为 form.html。";
 
   assert.equal(taskLikelyNeedsFileArtifact(`${userTask}\n${upstream}`), true);
-  assert.equal(stepShouldProduceFileArtifact(devStep), true);
+  assert.equal(stepShouldProduceFileArtifact(devStep), false);
   assert.equal(outputHasFileArtifact("这里只拆解任务，没有代码块"), false);
 });
 

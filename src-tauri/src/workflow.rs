@@ -38,7 +38,7 @@ pub fn default_workflow_steps() -> Vec<WorkflowStep> {
         workflow_step(WorkflowStage::TaskSplit, "DEV Agent", "拆分接口、数据流、实现任务和测试任务。"),
         workflow_step(WorkflowStage::CodeReview, "ARCH Agent", "对 DEV 产物做代码审查、红蓝质询、架构风险和非功能边界评估，输出可预览 CR 报告。"),
         workflow_step(WorkflowStage::TestPlan, "QA Agent", "优先设计集成测试和端到端测试，记录执行证据。"),
-        workflow_step(WorkflowStage::Retrospective, "PM Agent", "失败归因、追责复盘，并沉淀到 AI 工作宪法。每个任务流程处理完后，总结归纳本轮结论、各节点独立完成情况、交接结果、阻塞/打回点、关键证据和下一轮改进项。"),
+        workflow_step(WorkflowStage::Retrospective, "PM Agent", "输出交付总结，优先汇总 DEV 做了什么改动、生成了哪些新产物、修改了哪些原有文件；同时输出 QA 做了哪些测试、覆盖了哪些场景、是否全量覆盖、未覆盖项和残留风险；最后给出是否可交付、阻塞项和下一步。流程治理问题只作为补充。"),
     ]
 }
 
@@ -70,9 +70,11 @@ mod tests {
         assert!(instructions.contains("边界探测"));
         assert!(instructions.contains("代码审查"));
         assert!(instructions.contains("集成测试"));
-        assert!(instructions.contains("AI 工作宪法"));
-        assert!(instructions.contains("每个任务流程处理完后"));
-        assert!(instructions.contains("各节点独立完成情况"));
+        assert!(instructions.contains("DEV 做了什么改动"));
+        assert!(instructions.contains("生成了哪些新产物"));
+        assert!(instructions.contains("修改了哪些原有文件"));
+        assert!(instructions.contains("QA 做了哪些测试"));
+        assert!(instructions.contains("是否全量覆盖"));
     }
 
     #[test]

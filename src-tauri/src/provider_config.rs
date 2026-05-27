@@ -409,7 +409,7 @@ fn validate_provider(input: &ProviderConfigInput) -> Result<(), String> {
     if input.name.trim().is_empty() {
         return Err("Provider 名称不能为空".to_string());
     }
-    if !["openai-compatible", "anthropic", "gemini", "deepseek", "mock"].contains(&input.kind.trim()) {
+    if !["openai-compatible", "anthropic", "anthropic-compatible", "gemini", "deepseek", "mock"].contains(&input.kind.trim()) {
         return Err("Provider 类型不支持".to_string());
     }
     if ![API_PROTOCOL_RESPONSES, API_PROTOCOL_ANTHROPIC_MESSAGES].contains(&normalized_api_protocol(&input.api_protocol)) {
@@ -462,7 +462,7 @@ fn build_agent_prompt(owner: &str, stage: &str, task: &str, upstream: &str) -> S
         ""
     };
     let administrator_rule = if owner.contains("PM") || owner.contains("管理员") {
-        "\n\nPM 长期规则：每个任务流程处理完后，你必须输出总结归纳，覆盖：本轮结论、每个节点是否独立完成、节点交接是否成功、失败/打回/阻塞点、关键证据、流程治理问题、下一轮改进项。"
+        "\n\nPM 交付总结规则：当当前节点是 Retrospective 或流程收尾时，必须优先输出交付报告，而不是泛泛流程复盘。固定覆盖：1. DEV 改动总结：DEV 做了什么功能/修复/调整，生成了哪些新产物文件，修改了哪些原有文件，未完成或需人工确认的点；2. QA 测试总结：QA 做了哪些测试，覆盖了哪些场景，是否全量覆盖，未覆盖项和残留风险；3. 最终交付结论：是否可以交付、阻塞项、回归风险和下一步。流程治理、节点交接和改进项只作为补充，不得压过 DEV/QA 交付事实。"
     } else {
         ""
     };
@@ -887,11 +887,13 @@ mod tests {
             "QA Agent：节点完成",
         );
 
-        assert!(prompt.contains("PM 长期规则"));
-        assert!(prompt.contains("每个任务流程处理完后"));
-        assert!(prompt.contains("每个节点是否独立完成"));
-        assert!(prompt.contains("节点交接是否成功"));
-        assert!(prompt.contains("下一轮改进项"));
+        assert!(prompt.contains("PM 交付总结规则"));
+        assert!(prompt.contains("DEV 改动总结"));
+        assert!(prompt.contains("生成了哪些新产物文件"));
+        assert!(prompt.contains("修改了哪些原有文件"));
+        assert!(prompt.contains("QA 测试总结"));
+        assert!(prompt.contains("是否全量覆盖"));
+        assert!(prompt.contains("最终交付结论"));
         assert!(prompt.contains("ORCH 才是程序调度器"));
     }
 

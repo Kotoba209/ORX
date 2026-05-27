@@ -25,8 +25,8 @@ function workflow(): WorkflowDefinition {
 function plan(actions: OrionAction[] = [
   createOrionAction("workflow.create", "保存工作流", "保存工作流", { workflow: workflow() }),
   createOrionAction("workflow.run", "运行工作流", "运行工作流", { workflow_id: "wf" }),
-]): OrionCommandPlan {
-  return { task: "查登录失败 bug", workflow: workflow(), actions };
+], draft = workflow()): OrionCommandPlan {
+  return { task: "查登录失败 bug", workflow: draft, actions };
 }
 
 test("parses @orion text as a create-plan command", () => {
@@ -63,6 +63,16 @@ test("parses pending plan modification commands", () => {
     type: "modify_plan",
     modification: "add_clarification",
     note: "先问我需求",
+  });
+  assert.deepEqual(parseOrionCommand("加 QA 全量覆盖", true), {
+    type: "modify_plan",
+    modification: "add_qa",
+    note: "加 QA 全量覆盖",
+  });
+  assert.deepEqual(parseOrionCommand("不用 QA", true), {
+    type: "modify_plan",
+    modification: "remove_qa",
+    note: "不用 QA",
   });
 });
 
@@ -107,6 +117,35 @@ test("clarification modification inserts a Trellis clarification step", () => {
   const step = updated.workflow.steps.find((item) => item.stage === "Clarification");
   assert.equal(step?.owner, "PD Agent");
   assert.deepEqual(step?.skill_ids, ["trellis"]);
+});
+
+test("qa modification inserts a QA test step before retrospective", () => {
+  const base = plan([], {
+    ...workflow(),
+    steps: [
+      ...workflow().steps,
+      { stage: "Retrospective", owner: "PM Agent", instruction: "总结", enabled: true },
+    ],
+  });
+  const updated = applyOrionPlanModification(base, "add_qa");
+  const qaIndex = updated.workflow.steps.findIndex((step) => step.owner === "QA Agent");
+  const retrospectiveIndex = updated.workflow.steps.findIndex((step) => step.stage === "Retrospective");
+  assert.ok(qaIndex >= 0);
+  assert.ok(retrospectiveIndex > qaIndex);
+  assert.equal(updated.actions.some((action) => action.kind === "workflow.update"), true);
+});
+
+test("qa removal deletes QA test steps from a draft workflow", () => {
+  const baseWorkflow = {
+    ...workflow(),
+    steps: [
+      ...workflow().steps,
+      { stage: "TestPlan", owner: "QA Agent", instruction: "测试", enabled: true },
+    ],
+  };
+  const updated = applyOrionPlanModification(plan([], baseWorkflow), "remove_qa");
+  assert.equal(updated.workflow.steps.some((step) => step.owner === "QA Agent"), false);
+  assert.equal(updated.workflow.steps.some((step) => step.stage === "TestPlan"), false);
 });
 
 test("applies ORION node instruction to the matching workflow step", () => {
