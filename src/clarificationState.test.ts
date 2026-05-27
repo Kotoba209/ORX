@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  isClarificationContinueCommand,
+  nextRuntimeAfterClarificationConfirmation,
   nextRuntimeAfterClarificationAnswer,
   parseClarificationOutput,
   stepUsesInteractiveClarification,
@@ -50,4 +52,22 @@ test("adds user clarification answer to upstream and reruns same step", () => {
   assert.equal(next.nextIndex, 1);
   assert.match(next.upstream, /Trellis clarification answer/);
   assert.match(next.upstream, /需要批量禁用/);
+});
+
+test("recognizes short user commands that continue after clarification", () => {
+  assert.equal(isClarificationContinueCommand("需求确认"), true);
+  assert.equal(isClarificationContinueCommand("方案确认"), true);
+  assert.equal(isClarificationContinueCommand("继续下一个流程"), true);
+  assert.equal(isClarificationContinueCommand("执行下一个流程"), true);
+  assert.equal(isClarificationContinueCommand("还是需要补充错误提示样式"), false);
+});
+
+test("continues to the next step when user confirms clarification is done", () => {
+  const runtime: WorkflowRuntimeState = { nextIndex: 1, upstream: "用户任务：做用户管理页" };
+
+  const next = nextRuntimeAfterClarificationConfirmation(runtime, trellisStep, "需求确认", 1);
+
+  assert.equal(next.nextIndex, 2);
+  assert.match(next.upstream, /Trellis clarification confirmed/);
+  assert.match(next.upstream, /需求确认/);
 });

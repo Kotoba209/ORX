@@ -33,7 +33,9 @@ import { createWorkflowStageOptions } from "./workflowStageOptions";
 import { recommendWorkflowForTask } from "./workflowRouter";
 import { shouldBlockRecentlyStoppedTask } from "./workflowRunGuards";
 import {
+  isClarificationContinueCommand,
   nextRuntimeAfterClarificationAnswer,
+  nextRuntimeAfterClarificationConfirmation,
   parseClarificationOutput,
   stepUsesInteractiveClarification,
 } from "./clarificationState";
@@ -868,6 +870,16 @@ function App() {
   async function answerClarificationGate(answer: string) {
     const gate = clarificationGate;
     if (!gate) return;
+    if (isClarificationContinueCommand(answer)) {
+      const nextRuntime = nextRuntimeAfterClarificationConfirmation(gate.runtime, gate.step, answer, gate.stepIndex);
+      setRequirement("");
+      setError("");
+      setClarificationGate(null);
+      setChatLines((lines) => [...lines, `你：${answer}`, `ORCH：已确认 ${gate.step.owner} / ${gate.step.stage} 澄清完成，继续下一个流程。`]);
+      setLogLines((lines) => [...lines, `Trellis 用户确认完成：${answer}`, `继续节点索引：${gate.stepIndex + 1}`]);
+      await continueWorkflow(nextRuntime);
+      return;
+    }
     const nextRuntime = nextRuntimeAfterClarificationAnswer(gate.runtime, gate.step, answer, gate.stepIndex);
     setRequirement("");
     setError("");
