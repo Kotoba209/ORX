@@ -52,7 +52,8 @@ import { monitorOrionNodeResult, type OrionSuggestedAction } from "./orionRunMon
 type ProjectSummary = { root: string; files: ProjectFile[]; source_count: number; test_count: number; important_files: string[]; context_brief: string };
 type RegisteredProject = { id: string; name: string; path: string; source_count: number; test_count: number; context_brief: string; updated_at: number };
 type AddProjectResult = { project: RegisteredProject; summary: ProjectSummary };
-type ProviderConfig = { id: string; name: string; kind: string; base_url: string; use_proxy_route: boolean; proxy_url: string; model: string; api_key_ref: string };
+type ProviderApiProtocol = "responses" | "anthropic-messages";
+type ProviderConfig = { id: string; name: string; kind: string; api_protocol: ProviderApiProtocol; base_url: string; use_proxy_route: boolean; proxy_url: string; model: string; api_key_ref: string };
 type ProviderConnectionResult = { ok: boolean; status: number; endpoint: string; message: string };
 type AgentRunResult = { owner: string; stage: string; endpoint: string; output: string; elapsed_ms: number; input_tokens: number; output_tokens: number; total_tokens: number };
 type AgentBinding = { role: string; provider_id: string; model: string; temperature: number };
@@ -103,6 +104,10 @@ const approvalLabels: Record<NonNullable<WorkflowStep["approval"]>, string> = {
   user: "需要我确认",
   auto: "管理员自动转交",
 };
+const providerProtocolLabels: Record<ProviderApiProtocol, string> = {
+  responses: "OpenAI Responses",
+  "anthropic-messages": "Anthropic Messages",
+};
 
 const defaultProjectPath = "D:\\CodexProjects\\workflow-manager-mvp";
 const workflowStorageKey = "workflow-manager.workflows.v1";
@@ -113,6 +118,7 @@ function createProviderDraft(index: number): ProviderConfig {
     id: `provider-${Date.now()}`,
     name: `Model ${suffix}`,
     kind: "openai-compatible",
+    api_protocol: "responses",
     base_url: "http://127.0.0.1:8317/v1",
     use_proxy_route: true,
     proxy_url: "http://127.0.0.1:7897",
@@ -178,7 +184,7 @@ function App() {
   const [workflows, setWorkflows] = useState<WorkflowDefinition[]>(initialWorkflowPreferences.workflows);
   const [activeWorkflowId, setActiveWorkflowId] = useState(initialWorkflowPreferences.activeWorkflowId);
   const [providerSnapshot, setProviderSnapshot] = useState<ProviderSnapshot>({ providers: [], agents: [] });
-  const [providerForm, setProviderForm] = useState<ProviderConfig>({ id: "gpt-local", name: "GPT Local", kind: "openai-compatible", base_url: "http://127.0.0.1:8317/v1", use_proxy_route: true, proxy_url: "http://127.0.0.1:7897", model: "gpt-5.5", api_key_ref: "GPT_LOCAL_API_KEY" });
+  const [providerForm, setProviderForm] = useState<ProviderConfig>({ id: "gpt-local", name: "GPT Local", kind: "openai-compatible", api_protocol: "responses", base_url: "http://127.0.0.1:8317/v1", use_proxy_route: true, proxy_url: "http://127.0.0.1:7897", model: "gpt-5.5", api_key_ref: "GPT_LOCAL_API_KEY" });
   const [agentForm, setAgentForm] = useState<AgentBinding>({ role: "developer", provider_id: "gpt-local", model: "gpt-5.5", temperature: 0.2 });
   const [inspectorView, setInspectorView] = useState<InspectorView>("output");
   const [configPanel, setConfigPanel] = useState<ConfigPanel>(null);
@@ -559,7 +565,9 @@ function App() {
   }
 
   function providerEndpoint(provider: ProviderConfig) {
-    return `${provider.base_url.trim().replace(/\/$/, "")}/responses`;
+    const baseUrl = provider.base_url.trim().replace(/\/$/, "");
+    if (provider.api_protocol === "anthropic-messages") return `${baseUrl}/v1/messages`;
+    return `${baseUrl}/responses`;
   }
 
   function toggleTreePath(path: string) {
@@ -917,10 +925,13 @@ function App() {
     const planRisk = highestOrionRisk(actions);
     if (isOrionPlanAllowedBySession(orionSessionAllowedRisk, planRisk)) {
       setInspectorView("output");
+      const allowLine = planRisk === "direct"
+        ? `ORION：已生成工作流「${workflow.name}」，普通规划和运行不需要额外授权，将直接交给 ORCH 执行。`
+        : `ORION：本会话已允许 ${orionRiskLabel(planRisk)}，将直接创建并运行「${workflow.name}」。`;
       setChatLines((lines) => [
         ...lines,
         `你：@orion ${task}`,
-        `ORION：本会话已允许 ${orionRiskLabel(planRisk)}，将直接创建并运行「${workflow.name}」。`,
+        allowLine,
       ]);
       setLogLines((lines) => [...lines, `ORION session allow: ${planRisk}`, `ORION plan: ${workflow.name}`, ...actions.map((action) => `${action.kind} risk=${action.risk} ${action.summary}`)]);
       void executeOrionPendingPlan(plan, "session");
@@ -933,7 +944,7 @@ function App() {
       `你：@orion ${task}`,
       `ORION：我建议创建工作流「${workflow.name}」。`,
       `ORION：${workflow.steps.map((step, index) => `${index + 1}. ${step.owner} / ${step.stage}${step.skill_ids?.length ? `（${step.skill_ids.join(", ")}）` : ""}`).join("；")}`,
-      `ORION：准备执行 ${actions.length} 个动作：${actions.map((action) => `${action.kind}[${action.risk}]`).join(" -> ")}。请在输入框上方选择允许、始终允许或驳回。`,
+      `ORION：准备执行 ${actions.length} 个高权限动作：${actions.map((action) => `${action.kind}[${action.risk}]`).join(" -> ")}。请在输入框上方选择允许、始终允许或驳回。`,
     ]);
     setLogLines((lines) => [...lines, `ORION plan: ${workflow.name}`, ...actions.map((action) => `${action.kind} risk=${action.risk} ${action.summary}`)]);
   }
@@ -1496,7 +1507,7 @@ function App() {
         >
           {orionPendingPlan && <section className="orion-permission-request" aria-label="ORION 权限请求">
             <header>
-              <strong>ORION 请求：创建并运行工作流</strong>
+              <strong>ORION 请求：执行高权限动作</strong>
               <span>{orionPendingPlan.workflow.name}</span>
             </header>
             <p>{orionRiskLabel(highestOrionRisk(orionPendingPlan.actions))} · {actionRiskSummary(orionPendingPlan.actions)}</p>
@@ -1618,6 +1629,7 @@ function App() {
             <section className="provider-panel">
               <label><span>ID</span><input value={providerForm.id} onChange={(event) => setProviderForm({ ...providerForm, id: event.target.value })} /></label>
               <label><span>名称</span><input value={providerForm.name} onChange={(event) => setProviderForm({ ...providerForm, name: event.target.value })} /></label>
+              <label><span>API 协议</span><select value={providerForm.api_protocol} onChange={(event) => setProviderForm({ ...providerForm, api_protocol: event.target.value as ProviderApiProtocol })}>{Object.entries(providerProtocolLabels).map(([protocol, label]) => <option key={protocol} value={protocol}>{label}</option>)}</select></label>
               <label><span>Base URL</span><input value={providerForm.base_url} onChange={(event) => setProviderForm({ ...providerForm, base_url: event.target.value })} /></label>
               <label className="toggle-row proxy-toggle"><input type="checkbox" checked={providerForm.use_proxy_route} onChange={(event) => setProviderForm({ ...providerForm, use_proxy_route: event.target.checked })} /><span>通过本机 Clash 代理请求</span></label>
               <label><span>代理地址</span><input value={providerForm.proxy_url} placeholder="例如：http://127.0.0.1:7897" onChange={(event) => setProviderForm({ ...providerForm, proxy_url: event.target.value })} /></label>

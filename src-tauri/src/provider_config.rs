@@ -7,12 +7,16 @@ use std::time::{Duration, Instant};
 
 const PROVIDER_TEST_TIMEOUT_SECS: u64 = 45;
 const AGENT_RUN_TIMEOUT_SECS: u64 = 240;
+const API_PROTOCOL_RESPONSES: &str = "responses";
+const API_PROTOCOL_ANTHROPIC_MESSAGES: &str = "anthropic-messages";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProviderConfig {
     pub id: String,
     pub name: String,
     pub kind: String,
+    #[serde(default = "default_api_protocol")]
+    pub api_protocol: String,
     pub base_url: String,
     #[serde(default)]
     pub use_proxy_route: bool,
@@ -41,6 +45,8 @@ pub struct ProviderConfigInput {
     pub id: String,
     pub name: String,
     pub kind: String,
+    #[serde(default = "default_api_protocol")]
+    pub api_protocol: String,
     pub base_url: String,
     pub use_proxy_route: bool,
     pub proxy_url: String,
@@ -112,6 +118,10 @@ fn default_proxy_url() -> String {
     "http://127.0.0.1:7897".to_string()
 }
 
+fn default_api_protocol() -> String {
+    API_PROTOCOL_RESPONSES.to_string()
+}
+
 pub fn load_config(path: impl AsRef<Path>) -> Result<ProviderConfigSnapshot, String> {
     let path = path.as_ref();
     if !path.exists() {
@@ -129,6 +139,7 @@ pub fn save_provider(path: impl AsRef<Path>, input: ProviderConfigInput) -> Resu
         id: input.id.trim().to_string(),
         name: input.name.trim().to_string(),
         kind: input.kind.trim().to_string(),
+        api_protocol: normalized_api_protocol(&input.api_protocol).to_string(),
         base_url: input.base_url.trim().trim_end_matches('/').to_string(),
         use_proxy_route: input.use_proxy_route,
         proxy_url: input.proxy_url.trim().trim_end_matches('/').to_string(),
@@ -193,22 +204,16 @@ pub fn test_provider_connection(input: ProviderConfigInput) -> Result<ProviderCo
         return Err(format!("API Key 引用为空: {}", input.api_key_ref.trim()));
     }
 
-    let endpoint = provider_responses_endpoint(input.base_url.trim());
+    let endpoint = provider_endpoint(input.base_url.trim(), &input.api_protocol);
     let mut client_builder = reqwest::blocking::Client::builder().timeout(Duration::from_secs(PROVIDER_TEST_TIMEOUT_SECS));
     if input.use_proxy_route {
         let proxy = reqwest::Proxy::all(input.proxy_url.trim()).map_err(|error| format!("代理地址无效: {error}"))?;
         client_builder = client_builder.proxy(proxy);
     }
     let client = client_builder.build().map_err(|error| format!("创建 HTTP 客户端失败: {error}"))?;
-    let payload = serde_json::json!({
-        "model": input.model.trim(),
-        "input": "你是 PM Agent。请只回复 OK，表示 Provider 连接正常。",
-        "max_output_tokens": 32
-    });
-    let response = client
-        .post(&endpoint)
-        .bearer_auth(api_key.trim())
-        .json(&payload)
+    let payload = build_provider_payload_with_limit(&input.api_protocol, input.model.trim(), "你是 PM Agent。请只回复 OK，表示 Provider 连接正常。", "", 32)?;
+    let request = client.post(&endpoint).json(&payload);
+    let response = apply_provider_auth(request, &input.api_protocol, api_key.trim())
         .send()
         .map_err(|error| format!("Provider 连接失败: {}", format_reqwest_error(&error)))?;
     let status = response.status().as_u16();
@@ -246,7 +251,7 @@ pub fn run_agent(input: AgentRunInput) -> Result<AgentRunResult, String> {
         return Err(format!("API Key 引用为空: {}", input.provider.api_key_ref.trim()));
     }
 
-    let endpoint = provider_responses_endpoint(input.provider.base_url.trim());
+    let endpoint = provider_endpoint(input.provider.base_url.trim(), &input.provider.api_protocol);
     let prompt = build_agent_prompt(&input.owner, &input.stage, &input.task, &input.upstream);
     let mut client_builder = reqwest::blocking::Client::builder().timeout(Duration::from_secs(AGENT_RUN_TIMEOUT_SECS));
     if input.provider.use_proxy_route {
@@ -254,11 +259,9 @@ pub fn run_agent(input: AgentRunInput) -> Result<AgentRunResult, String> {
         client_builder = client_builder.proxy(proxy);
     }
     let client = client_builder.build().map_err(|error| format!("创建 HTTP 客户端失败: {error}"))?;
-    let payload = build_responses_payload(input.provider.model.trim(), &prompt, &input.upstream)?;
-    let response = client
-        .post(&endpoint)
-        .bearer_auth(api_key.trim())
-        .json(&payload)
+    let payload = build_provider_payload(&input.provider.api_protocol, input.provider.model.trim(), &prompt, &input.upstream)?;
+    let request = client.post(&endpoint).json(&payload);
+    let response = apply_provider_auth(request, &input.provider.api_protocol, api_key.trim())
         .send()
         .map_err(|error| agent_call_diagnostic(&input, &endpoint, &format_reqwest_error(&error)))?;
     let status = response.status().as_u16();
@@ -320,6 +323,27 @@ fn build_responses_payload(model: &str, prompt: &str, upstream: &str) -> Result<
     }))
 }
 
+fn build_provider_payload(protocol: &str, model: &str, prompt: &str, upstream: &str) -> Result<serde_json::Value, String> {
+    build_provider_payload_with_limit(protocol, model, prompt, upstream, 4096)
+}
+
+fn build_provider_payload_with_limit(protocol: &str, model: &str, prompt: &str, upstream: &str, max_tokens: u64) -> Result<serde_json::Value, String> {
+    match normalized_api_protocol(protocol) {
+        API_PROTOCOL_ANTHROPIC_MESSAGES => Ok(serde_json::json!({
+            "model": model,
+            "messages": [{ "role": "user", "content": prompt }],
+            "max_tokens": max_tokens
+        })),
+        _ => {
+            let mut payload = build_responses_payload(model, prompt, upstream)?;
+            if let Some(object) = payload.as_object_mut() {
+                object.insert("max_output_tokens".to_string(), serde_json::json!(max_tokens));
+            }
+            Ok(payload)
+        }
+    }
+}
+
 fn collect_image_data_urls(upstream: &str) -> Result<Vec<String>, String> {
     let mut urls = Vec::new();
     for line in upstream.lines() {
@@ -357,6 +381,7 @@ fn default_config() -> ProviderConfigSnapshot {
         id: "gpt-local".to_string(),
         name: "GPT Local".to_string(),
         kind: "openai-compatible".to_string(),
+        api_protocol: default_api_protocol(),
         base_url: "http://127.0.0.1:8317/v1".to_string(),
         use_proxy_route: true,
         proxy_url: "http://127.0.0.1:7897".to_string(),
@@ -387,6 +412,9 @@ fn validate_provider(input: &ProviderConfigInput) -> Result<(), String> {
     if !["openai-compatible", "anthropic", "gemini", "deepseek", "mock"].contains(&input.kind.trim()) {
         return Err("Provider 类型不支持".to_string());
     }
+    if ![API_PROTOCOL_RESPONSES, API_PROTOCOL_ANTHROPIC_MESSAGES].contains(&normalized_api_protocol(&input.api_protocol)) {
+        return Err("API 协议不支持".to_string());
+    }
     if input.base_url.trim().is_empty() {
         return Err("Base URL 不能为空".to_string());
     }
@@ -401,6 +429,29 @@ fn validate_provider(input: &ProviderConfigInput) -> Result<(), String> {
 
 fn provider_responses_endpoint(base_url: &str) -> String {
     format!("{}/responses", base_url.trim_end_matches('/'))
+}
+
+fn provider_endpoint(base_url: &str, protocol: &str) -> String {
+    match normalized_api_protocol(protocol) {
+        API_PROTOCOL_ANTHROPIC_MESSAGES => format!("{}/v1/messages", base_url.trim_end_matches('/')),
+        _ => provider_responses_endpoint(base_url),
+    }
+}
+
+fn normalized_api_protocol(protocol: &str) -> &str {
+    let trimmed = protocol.trim();
+    if trimmed.is_empty() {
+        API_PROTOCOL_RESPONSES
+    } else {
+        trimmed
+    }
+}
+
+fn apply_provider_auth(request: reqwest::blocking::RequestBuilder, protocol: &str, api_key: &str) -> reqwest::blocking::RequestBuilder {
+    match normalized_api_protocol(protocol) {
+        API_PROTOCOL_ANTHROPIC_MESSAGES => request.header("x-api-key", api_key).header("anthropic-version", "2023-06-01"),
+        _ => request.bearer_auth(api_key),
+    }
 }
 
 fn build_agent_prompt(owner: &str, stage: &str, task: &str, upstream: &str) -> String {
@@ -457,12 +508,37 @@ fn read_api_key_from_secrets(path: &Path, api_key_ref: &str) -> Result<String, S
 
 fn extract_response_text(content: &str) -> Option<String> {
     let value = serde_json::from_str::<serde_json::Value>(content).ok()?;
-    value
-        .get("output")?
-        .as_array()?
+    if let Some(text) = value
+        .get("output")
+        .and_then(|output| output.as_array())
         .iter()
+        .flat_map(|items| items.iter())
         .flat_map(|item| item.get("content").and_then(|content| content.as_array()).into_iter().flatten())
         .find_map(|content| content.get("text").and_then(|text| text.as_str()))
+        .map(|text| text.trim().to_string())
+    {
+        return Some(text);
+    }
+
+    if let Some(text) = value
+        .get("content")
+        .and_then(|content| content.as_array())
+        .into_iter()
+        .flatten()
+        .filter(|item| item.get("type").and_then(|kind| kind.as_str()) == Some("text"))
+        .find_map(|item| item.get("text").and_then(|text| text.as_str()))
+        .map(|text| text.trim().to_string())
+    {
+        return Some(text);
+    }
+
+    value
+        .get("choices")
+        .and_then(|choices| choices.as_array())
+        .and_then(|choices| choices.first())
+        .and_then(|choice| choice.get("message"))
+        .and_then(|message| message.get("content"))
+        .and_then(|text| text.as_str())
         .map(|text| text.trim().to_string())
 }
 
@@ -475,10 +551,14 @@ fn extract_token_usage(content: &str) -> TokenUsage {
         Some(usage) => usage,
         None => return TokenUsage::default(),
     };
+    let input_tokens = usage.get("input_tokens").and_then(|value| value.as_u64()).unwrap_or(0);
+    let cached_tokens = usage.get("cache_read_input_tokens").and_then(|value| value.as_u64()).unwrap_or(0);
+    let output_tokens = usage.get("output_tokens").and_then(|value| value.as_u64()).unwrap_or(0);
+    let total_tokens = usage.get("total_tokens").and_then(|value| value.as_u64()).unwrap_or(input_tokens + cached_tokens + output_tokens);
     TokenUsage {
-        input_tokens: usage.get("input_tokens").and_then(|value| value.as_u64()).unwrap_or(0),
-        output_tokens: usage.get("output_tokens").and_then(|value| value.as_u64()).unwrap_or(0),
-        total_tokens: usage.get("total_tokens").and_then(|value| value.as_u64()).unwrap_or(0),
+        input_tokens: input_tokens + cached_tokens,
+        output_tokens,
+        total_tokens,
     }
 }
 
@@ -564,6 +644,7 @@ mod tests {
                 id: "deepseek".to_string(),
                 name: "DeepSeek".to_string(),
                 kind: "openai-compatible".to_string(),
+                api_protocol: default_api_protocol(),
                 base_url: "https://api.deepseek.com/v1/".to_string(),
                 use_proxy_route: true,
                 proxy_url: "http://127.0.0.1:7890/".to_string(),
@@ -606,6 +687,7 @@ mod tests {
 
         assert_eq!(roles, vec!["administrator", "product", "developer", "architect", "tester"]);
         assert_eq!(snapshot.providers[0].kind, "openai-compatible");
+        assert_eq!(snapshot.providers[0].api_protocol, "responses");
         assert!(snapshot.providers[0].use_proxy_route);
         assert_eq!(snapshot.providers[0].proxy_url, "http://127.0.0.1:7897");
     }
@@ -620,6 +702,7 @@ mod tests {
                 id: "one".to_string(),
                 name: "One".to_string(),
                 kind: "openai-compatible".to_string(),
+                api_protocol: default_api_protocol(),
                 base_url: "http://127.0.0.1:8317/v1".to_string(),
                 use_proxy_route: false,
                 proxy_url: "".to_string(),
@@ -634,6 +717,7 @@ mod tests {
                 id: "two".to_string(),
                 name: "Two".to_string(),
                 kind: "openai-compatible".to_string(),
+                api_protocol: default_api_protocol(),
                 base_url: "http://127.0.0.1:8317/v1".to_string(),
                 use_proxy_route: false,
                 proxy_url: "".to_string(),
@@ -674,8 +758,26 @@ mod tests {
     }
 
     #[test]
+    fn provider_endpoint_uses_anthropic_messages_path() {
+        assert_eq!(
+            provider_endpoint("https://token-plan-cn.xiaomimimo.com/anthropic", "anthropic-messages"),
+            "https://token-plan-cn.xiaomimimo.com/anthropic/v1/messages"
+        );
+        assert_eq!(
+            provider_endpoint("https://token-plan-cn.xiaomimimo.com/anthropic/", "anthropic-messages"),
+            "https://token-plan-cn.xiaomimimo.com/anthropic/v1/messages"
+        );
+    }
+
+    #[test]
     fn extract_response_text_reads_responses_output_text() {
         let content = r#"{"output":[{"type":"message","content":[{"type":"output_text","text":"OK"}]}]}"#;
+        assert_eq!(extract_response_text(content).unwrap(), "OK");
+    }
+
+    #[test]
+    fn extract_response_text_reads_anthropic_messages_text() {
+        let content = r#"{"content":[{"type":"text","text":"OK"},{"type":"thinking","thinking":"hidden"}]}"#;
         assert_eq!(extract_response_text(content).unwrap(), "OK");
     }
 
@@ -704,6 +806,16 @@ mod tests {
         assert_eq!(usage.input_tokens, 123);
         assert_eq!(usage.output_tokens, 45);
         assert_eq!(usage.total_tokens, 168);
+    }
+
+    #[test]
+    fn extract_token_usage_reads_anthropic_messages_usage() {
+        let content = r#"{"usage":{"input_tokens":74,"output_tokens":25,"cache_read_input_tokens":192}}"#;
+        let usage = extract_token_usage(content);
+
+        assert_eq!(usage.input_tokens, 266);
+        assert_eq!(usage.output_tokens, 25);
+        assert_eq!(usage.total_tokens, 291);
     }
 
     #[test]
@@ -804,6 +916,7 @@ mod tests {
                 id: "mock-local".to_string(),
                 name: "Mock Local".to_string(),
                 kind: "mock".to_string(),
+                api_protocol: default_api_protocol(),
                 base_url: "mock://local".to_string(),
                 use_proxy_route: false,
                 proxy_url: "".to_string(),
@@ -850,12 +963,31 @@ mod tests {
     }
 
     #[test]
+    fn anthropic_messages_payload_uses_messages_and_max_tokens() {
+        let payload = build_provider_payload("anthropic-messages", "mimo-v2.5-pro", "请只回复 OK", "").unwrap();
+
+        assert_eq!(payload.get("model").and_then(|value| value.as_str()), Some("mimo-v2.5-pro"));
+        assert_eq!(payload.get("max_tokens").and_then(|value| value.as_u64()), Some(4096));
+        assert!(payload.get("max_output_tokens").is_none());
+        assert_eq!(
+            payload
+                .get("messages")
+                .and_then(|value| value.as_array())
+                .and_then(|items| items.first())
+                .and_then(|item| item.get("content"))
+                .and_then(|value| value.as_str()),
+            Some("请只回复 OK")
+        );
+    }
+
+    #[test]
     fn agent_call_diagnostic_contains_workflow_node_and_endpoint() {
         let input = AgentRunInput {
             provider: ProviderConfigInput {
                 id: "gpt-local".to_string(),
                 name: "GPT Local".to_string(),
                 kind: "openai-compatible".to_string(),
+                api_protocol: default_api_protocol(),
                 base_url: "http://127.0.0.1:8317/v1".to_string(),
                 use_proxy_route: false,
                 proxy_url: "http://127.0.0.1:7890".to_string(),

@@ -10,7 +10,7 @@ export function stepUsesInteractiveClarification(step: WorkflowStep) {
 
 export function parseClarificationOutput(output: string): ClarificationDecision {
   const trimmed = output.trim();
-  if (/需求已明确|requirements\s+ready|ready\s+for\s+prd/i.test(trimmed)) {
+  if (/需求已明确|requirements\s+ready|ready\s+for\s+prd|用户已明确确认|需求基线|节点完成|已收敛|已完成|下发至(方案设计|PRD|下一?节点)/i.test(trimmed)) {
     return { status: "requirements_ready", prompt: trimmed };
   }
   return { status: "needs_user_input", prompt: trimmed || "请补充需求细节。" };

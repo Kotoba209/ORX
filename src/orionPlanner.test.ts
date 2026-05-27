@@ -25,5 +25,5 @@ test("creates an action plan to save and run a drafted workflow", () => {
   const plan = createOrionActionPlan(draft);
 
   assert.deepEqual(plan.map((action) => action.kind), ["workflow.create", "skill.attach", "skill.attach", "skill.attach", "workflow.run"]);
-  assert.equal(plan.every((action) => action.risk === "confirm"), true);
+  assert.equal(plan.every((action) => action.risk === "direct"), true);
 });

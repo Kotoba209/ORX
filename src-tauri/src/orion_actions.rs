@@ -92,21 +92,24 @@ pub fn validate_whitelisted_command(program: &str, args: &[String]) -> Result<()
 
 pub fn orion_action_risk(kind: &str) -> &'static str {
     match kind {
-        "project.inspect" | "workflow.recommend" | "workflow.draft" | "skill.list" | "memory.search" | "file.readProjectFile" => "direct",
-        "workflow.create"
+        "project.inspect"
+        | "workflow.recommend"
+        | "workflow.draft"
+        | "workflow.create"
         | "workflow.update"
         | "workflow.clone"
-        | "workflow.delete"
-        | "workflow.setDefault"
         | "workflow.run"
+        | "skill.list"
         | "skill.attach"
-        | "skill.detach"
+        | "memory.search"
+        | "file.readProjectFile" => "direct",
+        "skill.detach"
         | "memory.append"
         | "memory.update"
         | "file.writeGeneratedArtifact"
         | "command.runWhitelisted"
         | "release.build" => "confirm",
-        "git.commit" | "git.tag" | "git.push" => "strong-confirm",
+        "workflow.delete" | "workflow.setDefault" | "git.commit" | "git.tag" | "git.push" => "strong-confirm",
         _ => "strong-confirm",
     }
 }
@@ -203,7 +206,9 @@ mod tests {
     #[test]
     fn classifies_orion_action_risk_for_release_and_git() {
         assert_eq!(orion_action_risk("file.readProjectFile"), "direct");
+        assert_eq!(orion_action_risk("workflow.run"), "direct");
         assert_eq!(orion_action_risk("release.build"), "confirm");
+        assert_eq!(orion_action_risk("workflow.delete"), "strong-confirm");
         assert_eq!(orion_action_risk("git.push"), "strong-confirm");
     }
 }

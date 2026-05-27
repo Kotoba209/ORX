@@ -10,6 +10,9 @@ import {
 test("maps ORION direct actions to direct risk", () => {
   assert.equal(getOrionActionRisk("file.readProjectFile"), "direct");
   assert.equal(getOrionActionRisk("workflow.recommend"), "direct");
+  assert.equal(getOrionActionRisk("workflow.create"), "direct");
+  assert.equal(getOrionActionRisk("workflow.run"), "direct");
+  assert.equal(getOrionActionRisk("skill.attach"), "direct");
   assert.equal(getOrionActionRisk("memory.search"), "direct");
 });
 
@@ -17,10 +20,12 @@ test("maps ORION local mutation and build actions to confirm risk", () => {
   assert.equal(getOrionActionRisk("file.writeGeneratedArtifact"), "confirm");
   assert.equal(getOrionActionRisk("command.runWhitelisted"), "confirm");
   assert.equal(getOrionActionRisk("release.build"), "confirm");
-  assert.equal(getOrionActionRisk("workflow.run"), "confirm");
+  assert.equal(getOrionActionRisk("memory.append"), "confirm");
 });
 
-test("maps ORION git actions to strong confirmation risk", () => {
+test("maps ORION destructive and git actions to strong confirmation risk", () => {
+  assert.equal(getOrionActionRisk("workflow.delete"), "strong-confirm");
+  assert.equal(getOrionActionRisk("workflow.setDefault"), "strong-confirm");
   assert.equal(getOrionActionRisk("git.commit"), "strong-confirm");
   assert.equal(getOrionActionRisk("git.tag"), "strong-confirm");
   assert.equal(getOrionActionRisk("git.push"), "strong-confirm");

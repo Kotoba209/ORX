@@ -36,6 +36,7 @@ test("checks session allowance by risk level", () => {
   assert.equal(isOrionPlanAllowedBySession("confirm", "strong-confirm"), false);
   assert.equal(isOrionPlanAllowedBySession("strong-confirm", "strong-confirm"), true);
   assert.equal(isOrionPlanAllowedBySession(null, "confirm"), false);
+  assert.equal(isOrionPlanAllowedBySession(null, "direct"), true);
 });
 
 test("labels risks in Chinese for the composer", () => {

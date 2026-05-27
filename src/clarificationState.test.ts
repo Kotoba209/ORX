@@ -36,6 +36,12 @@ test("continues when Trellis marks requirements ready", () => {
   assert.equal(decision.status, "requirements_ready");
 });
 
+test("continues when Trellis summarizes a confirmed baseline", () => {
+  const decision = parseClarificationOutput("节点总结：用户已明确确认需求基线，所有澄清项均已收敛。本节点（Clarification）的核心职责已完成。请 ORCH 将最终需求基线下发至方案设计节点。");
+
+  assert.equal(decision.status, "requirements_ready");
+});
+
 test("adds user clarification answer to upstream and reruns same step", () => {
   const runtime: WorkflowRuntimeState = { nextIndex: 1, upstream: "用户任务：做用户管理页" };
 

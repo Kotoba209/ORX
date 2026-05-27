@@ -268,6 +268,7 @@ mod tests {
                 id: "mock-local".to_string(),
                 name: "Mock Local".to_string(),
                 kind: "mock".to_string(),
+                api_protocol: "responses".to_string(),
                 base_url: "mock://local".to_string(),
                 use_proxy_route: false,
                 proxy_url: "".to_string(),
