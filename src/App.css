@@ -2181,6 +2181,58 @@ body,
   margin-bottom: 10px;
 }
 
+.memory-candidate-request {
+  display: grid;
+  gap: 8px;
+  border: 1px solid #28322a;
+  border-radius: 8px;
+  background: #111711;
+  padding: 10px;
+  margin-bottom: 10px;
+}
+
+.memory-candidate-request header {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  color: #f4f4f5;
+  font-size: 13px;
+}
+
+.memory-candidate-request header span,
+.memory-candidate-request label span {
+  color: #9ca3af;
+  font-size: 11px;
+}
+
+.memory-candidate-request label {
+  display: grid;
+  gap: 4px;
+}
+
+.memory-candidate-request input,
+.memory-candidate-request textarea {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid #2d2d2f;
+  border-radius: 6px;
+  background: #0f0f10;
+  color: #f4f4f5;
+  font: inherit;
+  padding: 7px 8px;
+}
+
+.memory-candidate-request textarea {
+  min-height: 72px;
+  resize: vertical;
+}
+
+.memory-candidate-options {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .attachment-chip {
   max-width: min(320px, 100%);
   min-height: 34px;

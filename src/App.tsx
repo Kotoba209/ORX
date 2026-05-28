@@ -41,10 +41,10 @@ import {
 } from "./clarificationState";
 import {
   buildMemoryContextBlock,
-  createMemoryRuleCandidate,
   retrieveRelevantMemoryRules,
   type MemoryRule,
 } from "./memoryRules";
+import { createPendingMemoryCandidate, updatePendingMemoryCandidate as applyMemoryCandidatePatch, type PendingMemoryCandidate } from "./memoryCandidates";
 import { applyOrionNodeInstruction, applyOrionPlanModification, parseOrionCommand, type OrionPlanModification } from "./orionCommands";
 import { classifyOrionIntent, createOrionActionPlan, createOrionAssistantResponse, draftOrionWorkflow } from "./orionPlanner";
 import { groupOrionActionsByRisk, type OrionAction, type OrionRiskLevel } from "./orionActions";
@@ -195,6 +195,7 @@ function App() {
   const [providerTestResult, setProviderTestResult] = useState<ProviderConnectionResult | null>(null);
   const [appSettings, setAppSettings] = useState<AppSettings>({ artifact_output_dir: "" });
   const [memoryRules, setMemoryRules] = useState<MemoryRule[]>([]);
+  const [pendingMemoryCandidate, setPendingMemoryCandidate] = useState<PendingMemoryCandidate | null>(null);
   const [testingProvider, setTestingProvider] = useState(false);
   const [savingConfig, setSavingConfig] = useState(false);
   const [activeConversationId, setActiveConversationId] = useState("");
@@ -314,17 +315,38 @@ function App() {
     }
   }
 
-  async function tryAppendMemoryRule(candidateText: string, archive: TaskArchiveRef | null, stage: string) {
+  function proposeMemoryRuleCandidate(candidateText: string, archive: TaskArchiveRef | null, stage: string) {
     if (!archive || !candidateText.trim()) return;
+    const pending = createPendingMemoryCandidate(candidateText, archive.id, stage);
+    if (!pending) return;
+    setPendingMemoryCandidate(pending);
+    setChatLines((lines) => [...lines, `ORX：发现一条可沉淀的长期记忆候选：${pending.candidate.title}。请确认保存、编辑或忽略。`]);
+    setLogLines((lines) => [...lines, `长期记忆候选待确认：${pending.candidate.title}`]);
+  }
+
+  async function savePendingMemoryCandidate() {
+    if (!pendingMemoryCandidate) return;
     try {
-      const candidate = createMemoryRuleCandidate(candidateText, archive.id, stage);
-      const snapshot = await invoke<MemoryRuleSnapshot>("append_memory_rule", { input: candidate });
+      const snapshot = await invoke<MemoryRuleSnapshot>("append_memory_rule", { input: pendingMemoryCandidate.candidate });
       setMemoryRules(snapshot.rules);
-      setLogLines((lines) => [...lines, `长期记忆已沉淀：${candidate.title}`]);
+      setChatLines((lines) => [...lines, `ORX：长期记忆已保存：${pendingMemoryCandidate.candidate.title}`]);
+      setLogLines((lines) => [...lines, `长期记忆已保存：${pendingMemoryCandidate.candidate.title}`]);
+      setPendingMemoryCandidate(null);
     } catch (memoryError) {
       const message = memoryError instanceof Error ? memoryError.message : String(memoryError);
       setLogLines((lines) => [...lines, `长期记忆沉淀失败：${message}`]);
     }
+  }
+
+  function ignorePendingMemoryCandidate() {
+    if (!pendingMemoryCandidate) return;
+    setChatLines((lines) => [...lines, `ORX：已忽略长期记忆候选：${pendingMemoryCandidate.candidate.title}`]);
+    setLogLines((lines) => [...lines, `长期记忆候选已忽略：${pendingMemoryCandidate.candidate.title}`]);
+    setPendingMemoryCandidate(null);
+  }
+
+  function updatePendingMemoryCandidateDraft(patch: { title?: string; body?: string; tagsText?: string }) {
+    setPendingMemoryCandidate((pending) => pending ? applyMemoryCandidatePatch(pending, patch) : pending);
   }
 
   async function saveAppSettings(nextSettings = appSettings) {
@@ -1372,7 +1394,7 @@ function App() {
           setLogLines((lines) => [...lines, `ORION monitor: ${step.owner} / ${step.stage} 建议继续。`]);
         }
         if (step.stage === "Retrospective") {
-          await tryAppendMemoryRule(result.output, runtime.archive, step.stage);
+          proposeMemoryRuleCandidate(result.output, runtime.archive, step.stage);
         }
         runtime = { ...runtime, upstream: nextUpstream, nextIndex: stepIndex + 1 };
         if (shouldStopWorkflow(workflowStopRequestedRef)) {
@@ -1669,6 +1691,28 @@ function App() {
             <div className="orion-permission-options">
               <button type="button" onClick={() => { void approveOrionPendingAssistant(); }}>允许本次</button>
               <button type="button" className="danger-button" onClick={() => rejectOrionPendingAssistant()}>驳回</button>
+            </div>
+          </section>}
+          {pendingMemoryCandidate && <section className="memory-candidate-request" aria-label="长期记忆候选">
+            <header>
+              <strong>长期记忆候选</strong>
+              <span>{pendingMemoryCandidate.candidate.source_task_id}</span>
+            </header>
+            <label>
+              <span>标题</span>
+              <input value={pendingMemoryCandidate.candidate.title} onChange={(event) => updatePendingMemoryCandidateDraft({ title: event.target.value })} />
+            </label>
+            <label>
+              <span>内容</span>
+              <textarea value={pendingMemoryCandidate.candidate.body} onChange={(event) => updatePendingMemoryCandidateDraft({ body: event.target.value })} />
+            </label>
+            <label>
+              <span>标签</span>
+              <input value={pendingMemoryCandidate.candidate.tags.join(", ")} onChange={(event) => updatePendingMemoryCandidateDraft({ tagsText: event.target.value })} />
+            </label>
+            <div className="memory-candidate-options">
+              <button type="button" onClick={() => { void savePendingMemoryCandidate(); }}>保存记忆</button>
+              <button type="button" className="danger-button" onClick={ignorePendingMemoryCandidate}>忽略</button>
             </div>
           </section>}
           {pendingAttachments.length > 0 && <div className="attachment-tray" aria-label="待发送附件">
