@@ -2,7 +2,7 @@
 
 ## Design Goal
 
-ORX should feel like a lightweight local Agent workspace: calm, focused, and precise. The client should use a modern macOS-inspired light UI with soft shadows, restrained radius, clear hierarchy, and generous spacing. It must remain a working tool, not a landing page or decorative demo.
+ORX should feel like a lightweight local Agent workspace: calm, focused, and precise. The client uses a modern macOS-inspired light UI with soft shadows, restrained radius, clear hierarchy, and generous spacing. It must remain a working tool, not a landing page or decorative demo.
 
 The UI should prioritize these tasks:
 
@@ -14,24 +14,24 @@ The UI should prioritize these tasks:
 
 ## Layout
 
-Use a three-column application shell:
+Use a three-zone application shell:
 
-1. Left sidebar: workspaces, recent sessions, workflows, and Agent entry points.
+1. Left sidebar: navigation, workspaces, recent sessions, workflows, and Agent entry points.
 2. Main area: ORION conversation and workflow execution.
 3. Right inspector: output, context, project files, and action details.
 
 Recommended dimensions:
 
 - Sidebar width: 280px to 340px.
-- Inspector width: 360px to 460px.
+- Inspector width: 360px to 460px when expanded.
 - Main area: flexible, with the largest share of space.
 - App background: light gray.
 
-Avoid dark full-app backgrounds, decorative gradients, large hero sections, and nested cards.
+Avoid dark full-app backgrounds, decorative gradients, large hero sections, nested cards, and hidden layout reservations that make the conversation area feel squeezed.
 
 ## Visual Style
 
-The style reference is a modern macOS AI workspace, close to Linear, Raycast, and quiet native desktop tools.
+The style reference is a modern macOS AI workspace, close to Linear, Raycast, Codex desktop, and quiet native desktop tools.
 
 Use:
 
@@ -52,6 +52,7 @@ Avoid:
 - Decorative blobs or orbs.
 - Marketing-page composition.
 - Card inside card layouts.
+- Unreadably pale gray headings or labels.
 
 ## Color Tokens
 
@@ -82,6 +83,13 @@ Prefer a small token set:
 --success: #22c55e;
 --success-soft: #edfdf3;
 ```
+
+Rules:
+
+- Primary actions use `--accent`.
+- Hover states may use `--accent-soft`.
+- Danger buttons use white or `--danger-soft` by default, and stronger red only on hover or active state.
+- Text headings use `--text-primary`; do not use `#fafafa`, `#f7f7f7`, or other near-white text on white panels.
 
 ## Radius Tokens
 
@@ -119,15 +127,17 @@ Do not use heavy black shadows.
 
 ## Left Sidebar
 
-The left sidebar should closely follow the reference design:
+The left sidebar should closely follow the current light reference design:
 
 - Background: `#fbfbfc` or `#f7f7f8`.
-- Top area includes three macOS window dots.
+- No decorative macOS traffic-light dots unless they are real window controls.
 - Section title uses uppercase `WORKSPACES`, small text, gray color, and increased letter spacing.
+- Top navigation entries use compact line icons and text.
 - Workspace rows use a folder icon, project name, and muted path.
 - Recent sessions and workflows use quiet list rows.
 - Active item uses a soft blue-violet background or soft gray background.
-- Active item may use a restrained blue-violet or orange inset border.
+- Active item may use a restrained blue-violet inset border.
+- The project title row may reveal the add button when the row is hovered, not only when hovering the button itself.
 - Do not turn each item into a heavy card.
 
 Suggested hierarchy:
@@ -185,7 +195,7 @@ The main area is the ORION conversation and workflow execution stage.
 Structure:
 
 ```text
-Top status bar
+Top status line
 Conversation / workflow content
 Bottom Composer
 ```
@@ -195,22 +205,25 @@ The main content should feel like a focused document/chat workspace:
 - Keep content centered with a max width around 900px to 1080px.
 - Use light gray app background.
 - Use white rounded containers only for meaningful output, code, plans, or approval surfaces.
+- User messages align right.
+- ORION and ORCH messages align left.
+- Status bubbles must remain horizontal and readable; never let text wrap one character per line.
 - Avoid filling the screen with separate decorative cards.
+- Avoid hidden layout reservations such as `calc(100% - 372px)` for floating panels. If an element floats, it must not reduce the main content width.
 
 ## Top Bar
 
 The top bar should show current state without visual noise:
 
 - Current project.
-- Current ORION session.
-- Provider/model.
-- Permission mode.
-- Search.
-- Settings.
+- Current ORION session or workflow.
+- Provider/model when relevant.
+- Permission mode when relevant.
+- Search or settings only when the control has a real current use.
 
-Recommended height: 64px to 76px.
+Recommended height: 56px to 72px.
 
-Buttons should use pill radius when they are top-level actions. Settings may use the primary accent color.
+Do not keep placeholder top buttons such as `上下文` or `Settings` if the right inspector already provides those views.
 
 ## ORION Message Design
 
@@ -231,10 +244,11 @@ Rules:
 - Action plans must be structured lists, not raw log text.
 - Agent output should be collapsible or visually grouped by workflow node.
 - Workflow state should clearly show pending, running, waiting for approval, done, failed, skipped, and stopped.
+- Do not let floating workflow progress overlap the readable part of message bubbles.
 
 ## Composer
 
-The bottom Composer should follow the reference design:
+The bottom Composer should follow the Codex-like interaction model:
 
 - Fixed near the bottom of the main area.
 - White background.
@@ -242,19 +256,26 @@ The bottom Composer should follow the reference design:
 - Soft shadow.
 - Default height around 112px to 140px.
 - Auto-grow when text is long.
-- Left side: attachment/file action.
-- Lower helper text: send shortcut or current target.
-- Right side: primary send button.
+- Left side: attachment/file action when available.
+- Lower helper text: current target or active workflow.
+- Right side: primary send or stop button.
 
 State rules:
 
 - Idle: show Send.
 - ORION thinking: show loading state.
-- Workflow running: replace Send with Stop.
+- Workflow running: replace Send with Stop in the same position.
 - Approval pending: surface approval options above Composer.
 - Dragging attachments: highlight Composer border.
 
-## Permission Approval UI
+Button rules:
+
+- Send and Stop should be visually similar in size, around `36px x 36px`.
+- Stop uses a small centered CSS-drawn square. The square must be smaller than the button and visually centered.
+- Stop default state uses a light danger treatment; hover may use stronger red with white icon.
+- Do not use oversized dark-red circular stop buttons.
+
+## Permission, Memory, And Form UI
 
 Permission approval should appear above the Composer, similar to Codex action approval, not as a blocking full-screen modal.
 
@@ -263,8 +284,7 @@ Structure:
 ```text
 ORION 请求执行以下动作
 保存工作流 / 挂载 skill / 运行命令 / 推送代码
-
-[本会话始终允许同类权限]
+[本次会话始终允许同类权限]
 [允许本次]
 [驳回]
 [其他说明...]
@@ -279,6 +299,10 @@ Rules:
 - Do not use a full-screen overlay.
 - Do not hide the conversation while approval is pending.
 - "Always allow in this session" only applies to the same permission class.
+- Memory candidate panels use styled inputs and textareas, not browser-default form controls.
+- Input focus uses a blue-violet border and subtle focus ring.
+- Save memory uses the theme purple primary button.
+- Ignore/dismiss uses a red danger outline or soft red background.
 
 ## Workflow Node Display
 
@@ -305,6 +329,46 @@ Status colors:
 
 Use a timeline or clean list. Do not over-card every node.
 
+## Floating Workflow Progress
+
+The workflow progress panel is a floating assistant surface, not a layout column.
+
+Behavior:
+
+- Show it only when a workflow is active and the right inspector is collapsed.
+- Hide it when the right inspector is expanded.
+- Hide or relocate it when permission, approval, memory, or config surfaces are open.
+- It must not reserve width in the main conversation layout.
+- It must not squeeze the conversation bubbles to the left.
+- At narrow widths, hide it or move it above the composer instead of overlapping messages.
+
+Visual rules:
+
+- White compact panel with soft border and shadow.
+- Radius: 22px to 28px.
+- Header shows workflow name and progress count.
+- Completed nodes use green check state.
+- Running nodes use the accent state.
+- Pending nodes use muted gray state.
+
+Implementation guardrail:
+
+```css
+.workflow-progress-float {
+  position: fixed;
+  right: 72px;
+  top: 88px;
+  width: min(420px, calc(100vw - 48px));
+  z-index: 20;
+}
+
+.inspector-expanded .workflow-progress-float {
+  display: none;
+}
+```
+
+Do not pair this with hidden main-content padding or width subtraction.
+
 ## Right Inspector
 
 The right inspector keeps three primary tabs:
@@ -319,6 +383,7 @@ Behavior requirements:
 
 - Provide a top-right icon button to collapse or expand the inspector.
 - The button should sit with other shell controls, not inside the inspector content body.
+- The button hover state uses theme purple background and white icon/text.
 - When expanded, the inspector uses its normal width: 360px to 460px.
 - When collapsed, the inspector should shrink to a compact rail or disappear into the right edge while preserving a visible restore control.
 - The main area should smoothly reclaim or release space during the transition.
@@ -382,12 +447,24 @@ Show:
 
 - Current run status.
 - Current node.
+- ORION running recommendations.
+- Current workflow summary.
+- Node detailed output.
 - Recent Agent output.
-- Detailed output.
 - System logs.
 - Duration metrics.
 
-Logs must be layered by importance. Do not give raw logs and user-facing summaries the same visual weight.
+Rules:
+
+- Metrics are compact chips.
+- ORION recommendations, node details, recent output, and system logs are collapsible.
+- Collapsed rows should be about 44px to 48px high.
+- Collapsed row content is vertically centered: title on the left, count if needed, and `展开` on the right.
+- Expanded rows must not clip content or cover following panels.
+- Only collapsed state may use overflow clipping.
+- Current workflow summary must not hard-clip text; use line clamp only when paired with a clear expand affordance.
+- Logs must be layered by importance. Do not give raw logs and user-facing summaries the same visual weight.
+- Headings and recommendation titles use `--text-primary`.
 
 ### Context Tab
 
@@ -408,6 +485,16 @@ Show:
 - Files currently included in context.
 - Important files.
 - Expand/collapse state.
+
+Rules:
+
+- Match the reference file-list direction: clean white panel, line icons, compact rows.
+- Folder/file icons are black line icons by default and may use accent purple on hover or selected state.
+- Use explicit row columns for caret, icon, label, and tag.
+- Directory and file names must stay on the same row as their icon.
+- Never let labels wrap underneath the icon or display as one character per line.
+- Long names use ellipsis.
+- Right-click action menu should float above the file row and use a white rounded panel.
 
 ## Icons
 
@@ -434,7 +521,20 @@ Recommended icons:
 - `Copy`
 - `Download`
 
-Do not hand-write SVG icons unless the project already owns a custom icon.
+Rules:
+
+- Prefer lucide for general UI.
+- Local inline SVG line icons are allowed for the project file tree when lucide does not match the desired compact folder/file style.
+- Do not use emoji as functional icons.
+- Icon-only buttons must have an accessible label or title.
+
+App icon rules:
+
+- Use the ORX theme purple background, close to `#5b5cf6`.
+- The mark and word shape should be pure white.
+- Avoid 3D lettering, glow, chromatic edges, and colored borders.
+- Keep the icon readable at 16px, 32px, and 256px.
+- Regenerate Tauri icons from `src-tauri/icons/orx-source-1024.png` after changing the source icon.
 
 ## Typography
 
@@ -469,7 +569,7 @@ Sizes:
 - Helper text: 12px to 13px.
 - Log/code: 13px to 14px.
 
-Do not scale font size with viewport width.
+Do not scale font size with viewport width. Avoid negative letter spacing.
 
 ## Motion
 
@@ -478,9 +578,10 @@ Use restrained motion only:
 - Hover: subtle background or border change.
 - Active press: scale to 0.98.
 - Floating panel entry: opacity and slight translateY.
+- Inspector collapse/expand: width plus opacity/translate for spatial continuity.
 - Loading: small spinner or pulse.
 
-Avoid bounce, dramatic transitions, and decorative animation.
+Avoid bounce, dramatic transitions, decorative animation, and instant hard show/hide behavior for major panels.
 
 ## ORX Feature Mapping
 
@@ -489,49 +590,59 @@ Map current ORX features like this:
 - ORION conversation: main area.
 - ORION action plan: main message block and inspector details.
 - ORCH execution: main workflow state and right-side output logs.
+- Floating workflow progress: only when inspector is collapsed.
 - Workflow list: left sidebar.
 - Project files: right inspector.
 - Project profile: context tab.
 - Permission approval: floating panel above Composer.
 - Stop workflow: same position as Send button when running.
-- Provider/model settings: top bar and Settings.
-- Memory rules: context tab.
+- Provider/model settings: settings surface or top status controls when relevant.
+- Memory rules: context tab and memory candidate surface.
 - Skills/plugins: visible inside action plans.
 
 ## Implementation Rules
 
 When modifying UI:
 
-- Do not add new business capabilities.
+- Do not add new business capabilities unless explicitly requested.
 - Do not change command semantics.
 - Do not break ORION, ORCH, workflow execution, approval, or project scanning logic.
 - Prefer component structure and CSS improvements.
+- Prefer deleting outdated dark-theme conflicts instead of piling more overrides onto them.
 - Keep TypeScript types clear.
-- Verify with build after edits.
 - Important states must be visible: idle, thinking, waiting approval, running, stopped, failed, complete.
+- Verify with `npm --cache D:\npm-cache run build` after UI edits.
+- For workflow-adjacent UI edits, also run `npm --cache D:\npm-cache run workflow:selftest`.
+- Vite dev preview uses port `5178` with HMR port `5179`; avoid returning to blocked ports `1420` and `1421`.
 
 ## First UI Pass Priority
 
-The first UI pass should be display-only:
+The first UI pass is display-focused:
 
 1. Rebuild the light application shell.
 2. Redesign the left sidebar.
-3. Redesign the top bar.
-4. Redesign the bottom Composer.
-5. Redesign permission approval surfaces.
-6. Improve the right inspector hierarchy.
-7. Improve workflow running state display.
+3. Redesign the bottom Composer.
+4. Redesign permission and memory surfaces.
+5. Improve the right inspector hierarchy.
+6. Make the inspector collapse/expand smooth.
+7. Make floating workflow progress non-invasive.
+8. Improve project file tree display.
+9. Normalize app icon assets.
 
 ## Prompt For Future AI UI Work
 
 Use this prompt when asking another AI model to continue ORX UI work:
 
 ```text
-You are modifying the ORX client UI. Do not add business features. Only improve layout, visual hierarchy, component structure, and display states.
+You are modifying the ORX client UI. Do not add business features unless explicitly requested. Improve layout, visual hierarchy, component structure, interaction states, and display quality while preserving existing ORION, ORCH, workflow, permission approval, project files, context, logs, provider, memory, and skill/plugin behavior.
 
-Use a light macOS-style AI workspace as the design direction: a soft left sidebar with macOS window dots, WORKSPACES title, workspace rows, recent sessions, and workflow entries; a central ORION conversation and workflow execution stage; a large rounded Composer at the bottom; and a right Inspector with Output, Context, and Project Files tabs.
+Use a light macOS/Codex-style AI workspace as the design direction: a soft left sidebar with WORKSPACES title, navigation rows, workspace rows, recent sessions, and workflow entries; a central ORION conversation and workflow execution stage; a large rounded Composer at the bottom; and a collapsible right Inspector with Output, Context, and Project Files tabs.
 
-Visual requirements: light gray app background, white surfaces, soft shadows, restrained radii, blue-violet accent, orange for approval/risk, red for failure. Avoid dark full-app backgrounds, gradient backgrounds, decorative blobs, marketing hero sections, and nested cards.
+Visual requirements: light gray app background, white surfaces, soft shadows, restrained radii, blue-violet accent, orange for approval/risk, red for failure. Avoid dark full-app backgrounds, gradient backgrounds, decorative blobs, marketing hero sections, nested cards, and unreadably pale text.
 
-Strictly follow AGENTS.md. Preserve existing ORION, ORCH, workflow, permission approval, project files, context, logs, provider, memory, and skill/plugin behavior. Only reorganize presentation and CSS styling. Run the build after changes.
+Interaction requirements: right Inspector collapse/expand must animate smoothly. The floating workflow progress panel must only appear when the inspector is collapsed, must not reserve layout width, and must not cover readable conversation content. Send and Stop buttons should share the same compact size. Forms and memory candidate surfaces must use styled inputs and theme-colored actions instead of browser-default controls.
+
+Project files should use compact line-style folder/file icons, same-row labels, ellipsis for long names, and a clean white panel. App icons should use the ORX theme purple background with a pure white mark, without 3D lettering, glow, or colored borders.
+
+Strictly follow AGENTS.md. Run `npm --cache D:\npm-cache run build` after changes. For workflow-adjacent UI changes, also run `npm --cache D:\npm-cache run workflow:selftest`.
 ```
