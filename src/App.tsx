@@ -46,7 +46,7 @@ import {
   type MemoryRule,
 } from "./memoryRules";
 import { applyOrionNodeInstruction, applyOrionPlanModification, parseOrionCommand, type OrionPlanModification } from "./orionCommands";
-import { createOrionActionPlan, draftOrionWorkflow } from "./orionPlanner";
+import { classifyOrionIntent, createOrionActionPlan, createOrionAssistantResponse, draftOrionWorkflow } from "./orionPlanner";
 import { groupOrionActionsByRisk, type OrionAction, type OrionRiskLevel } from "./orionActions";
 import { actionRiskSummary, formatOrionPayloadPreview, highestOrionRisk, isOrionPlanAllowedBySession, orionRiskLabel } from "./orionPermission";
 import { monitorOrionNodeResult, type OrionSuggestedAction } from "./orionRunMonitor";
@@ -73,6 +73,8 @@ type WorkflowRuntime = { task: string; enabledSteps: WorkflowStep[]; nextIndex: 
 type ApprovalGate = { step: WorkflowStep; stepIndex: number; result: AgentRunResult; runtime: WorkflowRuntime; preview: string; upstreamBefore: string };
 type ClarificationGate = { step: WorkflowStep; stepIndex: number; result: AgentRunResult; runtime: WorkflowRuntime; prompt: string };
 type OrionPendingPlan = { task: string; workflow: WorkflowDefinition; actions: OrionAction[] };
+type OrionPendingAssistant = { task: string; message: string; actions: OrionAction[] };
+type WhitelistedCommandResult = { program: string; args: string[]; cwd: string; status: number; stdout: string; stderr: string };
 type InspectorView = "output" | "context" | "files";
 type ConfigPanel = "provider" | "workflow" | "settings" | null;
 type ContextMenuState =
@@ -209,6 +211,7 @@ function App() {
   const [approvalGate, setApprovalGate] = useState<ApprovalGate | null>(null);
   const [clarificationGate, setClarificationGate] = useState<ClarificationGate | null>(null);
   const [orionPendingPlan, setOrionPendingPlan] = useState<OrionPendingPlan | null>(null);
+  const [orionPendingAssistant, setOrionPendingAssistant] = useState<OrionPendingAssistant | null>(null);
   const [orionSessionAllowedRisk, setOrionSessionAllowedRisk] = useState<OrionRiskLevel | null>(null);
   const [orionSuggestions, setOrionSuggestions] = useState<OrionSuggestedAction[]>([]);
   const [currentActivity, setCurrentActivity] = useState("");
@@ -902,6 +905,10 @@ function App() {
       await handleOrionConversationCommand(text, true);
       return;
     }
+    if (orionPendingAssistant) {
+      await handleOrionAssistantCommand(text);
+      return;
+    }
     if (clarificationGate) {
       await answerClarificationGate(text);
       return;
@@ -931,6 +938,33 @@ function App() {
   }
 
   function createOrionPlan(task: string) {
+    const projectFiles = summary?.files.map((file) => file.path) ?? workspaceFiles.map((file) => file.path);
+    const intent = classifyOrionIntent(task, { projectFiles });
+    if (intent.mode === "assistant") {
+      const response = createOrionAssistantResponse(task);
+      setOrionPendingPlan(null);
+      setInspectorView("output");
+      const needsConfirmation = response.actions.some((action) => action.risk !== "direct");
+      if (needsConfirmation) {
+        setOrionPendingAssistant({ task, message: response.message, actions: response.actions });
+      } else if (response.actions.length > 0) {
+        void executeOrionAssistantActions({ task, message: response.message, actions: response.actions }, "直接执行");
+      }
+      setChatLines((lines) => [
+        ...lines,
+        `你：@orion ${task}`,
+        response.message,
+        response.actions.length > 0
+          ? `ORION：准备了 ${response.actions.length} 个本机助手动作草案：${response.actions.map((action) => `${action.kind}[${action.risk}]`).join(" -> ")}。${needsConfirmation ? "请允许本次或驳回。" : "我会直接处理只读动作。"}`
+          : "ORION：这不像需求开发或 Bug 修复，我会先按普通本机助手对话处理，不创建 ORCH 工作流。",
+      ]);
+      setLogLines((lines) => [
+        ...lines,
+        `ORION assistant intent: ${intent.reason}`,
+        ...response.actions.map((action) => `${action.kind} risk=${action.risk} ${action.summary}`),
+      ]);
+      return;
+    }
     const workflow = draftOrionWorkflow(task);
     const actions = createOrionActionPlan(workflow);
     const plan = { task, workflow, actions };
@@ -1006,6 +1040,21 @@ function App() {
     setChatLines((lines) => [...lines, `你：${text}`, "ORION：我还不能可靠地把这句话转成计划修改，所以已取消上一份动作计划。你可以用 @orion 重新描述目标。"]);
   }
 
+  async function handleOrionAssistantCommand(text: string) {
+    if (!orionPendingAssistant) return;
+    const normalized = text.trim();
+    if (/^(同意|执行|确认|允许|approve|yes|y)$/i.test(normalized)) {
+      await approveOrionPendingAssistant();
+      return;
+    }
+    if (/^(驳回|拒绝|取消|不要|reject|no|n)$/i.test(normalized)) {
+      rejectOrionPendingAssistant(text || "驳回");
+      return;
+    }
+    setRequirement("");
+    setChatLines((lines) => [...lines, `你：${text}`, "ORION：当前有本机助手动作等待确认。请回复“同意/允许”执行，或回复“驳回/取消”。"]);
+  }
+
   function modifyOrionPendingPlan(modification: OrionPlanModification, note: string) {
     if (!orionPendingPlan) return;
     const nextPlan = applyOrionPlanModification(orionPendingPlan, modification);
@@ -1034,6 +1083,66 @@ function App() {
       setOrionSessionAllowedRisk(planRisk);
     }
     await executeOrionPendingPlan(orionPendingPlan, alwaysAllowSession ? "session" : "once");
+  }
+
+  async function approveOrionPendingAssistant() {
+    if (!orionPendingAssistant) return;
+    const pending = orionPendingAssistant;
+    setOrionPendingAssistant(null);
+    setRequirement("");
+    setInspectorView("output");
+    await executeOrionAssistantActions(pending, "允许本次");
+  }
+
+  async function executeOrionAssistantActions(pending: OrionPendingAssistant, approvalLine: string) {
+    setChatLines((lines) => [...lines, `你：${approvalLine}`, `ORION：开始执行 ${pending.actions.length} 个本机助手动作。`]);
+    for (const action of pending.actions) {
+      try {
+        const result = await executeOrionAssistantAction(action);
+        setChatLines((lines) => [...lines, `ORION：${result}`]);
+        setLogLines((lines) => [...lines, `ORION assistant action done: ${action.kind}`, result]);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        setChatLines((lines) => [...lines, `ORION：动作执行失败：${message}`]);
+        setLogLines((lines) => [...lines, `ORION assistant action failed: ${action.kind}`, message]);
+      }
+    }
+  }
+
+  function rejectOrionPendingAssistant(inputText = "驳回") {
+    if (!orionPendingAssistant) return;
+    setChatLines((lines) => [...lines, `你：${inputText}`, "ORION：已取消这组本机助手动作。"]);
+    setLogLines((lines) => [...lines, `ORION assistant reject: ${orionPendingAssistant.task}`]);
+    setOrionPendingAssistant(null);
+    setRequirement("");
+  }
+
+  async function executeOrionAssistantAction(action: OrionAction) {
+    if (action.kind === "command.runWhitelisted") {
+      if (!canUseTauriCommands()) {
+        throw new Error("需要在 Tauri 客户端中执行本机命令；浏览器预览不可用。");
+      }
+      const program = typeof action.payload.program === "string" ? action.payload.program : "";
+      const args = Array.isArray(action.payload.args) ? action.payload.args.filter((item): item is string => typeof item === "string") : [];
+      if (!program) {
+        return "这个本机命令还没有解析出可执行程序；安装类动作需要先接入明确的软件源白名单。";
+      }
+      const cwd = typeof action.payload.cwd === "string" && action.payload.cwd.trim() ? action.payload.cwd : projectPath;
+      const result = await invoke<WhitelistedCommandResult>("orion_run_whitelisted_command", {
+        input: { program, args, cwd },
+      });
+      const command = [result.program, ...result.args].join(" ");
+      const output = previewOutput(`${result.stdout}${result.stderr ? `\n${result.stderr}` : ""}`) || "命令没有输出。";
+      return `命令完成：${command}，退出码 ${result.status}，目录 ${result.cwd}\n${output}`;
+    }
+    if (action.kind === "memory.search") {
+      const query = typeof action.payload.query === "string" ? action.payload.query : "";
+      const matches = retrieveRelevantMemoryRules(query, summary?.context_brief ?? "", memoryRules);
+      return matches.length > 0
+        ? `本地记忆命中：${matches.map((rule) => rule.title).join("；")}`
+        : "本地记忆没有命中相关资料；联网查阅能力还未接入。";
+    }
+    return `已跳过暂未支持的本机助手动作：${action.kind}`;
   }
 
   function rejectOrionPendingPlan(inputText = "驳回") {
@@ -1409,7 +1518,7 @@ function App() {
     </div>;
   }
 
-  function renderOrionActionGroups(plan: OrionPendingPlan) {
+  function renderOrionActionGroups(plan: { actions: OrionAction[] }) {
     const grouped = groupOrionActionsByRisk(plan.actions);
     const groups: OrionRiskLevel[] = ["direct", "confirm", "strong-confirm"];
     return <div className="orion-action-groups">
@@ -1437,6 +1546,18 @@ function App() {
           {step.orion_notes?.map((note) => <small key={`${step.owner}-${step.stage}-${note}`}>ORION：{note}</small>)}
         </div>)}
       </div>
+      {renderOrionActionGroups(plan)}
+    </article>;
+  }
+
+  function renderOrionAssistantPreview(plan: OrionPendingAssistant) {
+    return <article className="orion-preview">
+      <header>
+        <div><strong>ORION Local Assistant</strong><span>本机助手动作</span></div>
+        <em>{orionRiskLabel(highestOrionRisk(plan.actions))}</em>
+      </header>
+      <p className="orion-preview-task">{plan.task}</p>
+      <p>{plan.message}</p>
       {renderOrionActionGroups(plan)}
     </article>;
   }
@@ -1529,6 +1650,17 @@ function App() {
               <button type="button" className="danger-button" onClick={() => rejectOrionPendingPlan()}>驳回</button>
             </div>
           </section>}
+          {orionPendingAssistant && <section className="orion-permission-request" aria-label="ORION 本机助手权限请求">
+            <header>
+              <strong>ORION 请求：执行本机助手动作</strong>
+              <span>{orionPendingAssistant.task}</span>
+            </header>
+            <p>{orionRiskLabel(highestOrionRisk(orionPendingAssistant.actions))} · {actionRiskSummary(orionPendingAssistant.actions)}</p>
+            <div className="orion-permission-options">
+              <button type="button" onClick={() => { void approveOrionPendingAssistant(); }}>允许本次</button>
+              <button type="button" className="danger-button" onClick={() => rejectOrionPendingAssistant()}>驳回</button>
+            </div>
+          </section>}
           {pendingAttachments.length > 0 && <div className="attachment-tray" aria-label="待发送附件">
             {pendingAttachments.map((attachment) => <div className="attachment-chip" key={attachment.id}>
               <span>{attachment.name}</span>
@@ -1560,6 +1692,7 @@ function App() {
             <span>total {workflowTotals.total_tokens || "未返回"}</span>
           </div>
           {orionPendingPlan && renderOrionWorkflowPreview(orionPendingPlan)}
+          {orionPendingAssistant && renderOrionAssistantPreview(orionPendingAssistant)}
           {orionSuggestions.length > 0 && <article className="orion-suggestions">
             <header><strong>ORION Run Monitor</strong><span>{orionSuggestions.length} suggestions</span></header>
             {orionSuggestions.map((suggestion) => <section className={`orion-suggestion ${suggestion.kind}`} key={suggestion.id}>

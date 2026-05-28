@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ProjectFileReadInput {
@@ -27,6 +28,23 @@ pub struct GeneratedArtifactWriteInput {
 pub struct GeneratedArtifactWriteResult {
     pub path: String,
     pub bytes: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct WhitelistedCommandInput {
+    pub program: String,
+    pub args: Vec<String>,
+    pub cwd: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct WhitelistedCommandResult {
+    pub program: String,
+    pub args: Vec<String>,
+    pub cwd: String,
+    pub status: i32,
+    pub stdout: String,
+    pub stderr: String,
 }
 
 pub fn read_project_file(input: ProjectFileReadInput) -> Result<ProjectFileReadResult, String> {
@@ -79,7 +97,26 @@ pub fn write_generated_artifact(input: GeneratedArtifactWriteInput) -> Result<Ge
 pub fn validate_whitelisted_command(program: &str, args: &[String]) -> Result<(), String> {
     let normalized_program = program.trim().to_ascii_lowercase();
     let normalized_args = args.iter().map(|arg| arg.trim().to_ascii_lowercase()).collect::<Vec<_>>();
-    let allowed = (normalized_program == "npm" && normalized_args == ["run", "workflow:selftest"])
+    let trusted_install_args = trusted_winget_package_ids().iter().any(|package_id| {
+        normalized_args == [
+            "install",
+            "--id",
+            package_id,
+            "--exact",
+            "--accept-package-agreements",
+            "--accept-source-agreements",
+        ]
+    });
+    let trusted_status_args = trusted_winget_package_ids().iter().any(|package_id| {
+        normalized_args == ["list", "--id", package_id, "--exact"]
+    });
+    let allowed = (normalized_program == "node" && normalized_args == ["--version"])
+        || (normalized_program == "npm" && normalized_args == ["--version"])
+        || (normalized_program == "rustc" && normalized_args == ["-v"])
+        || (normalized_program == "cargo" && normalized_args == ["-v"])
+        || (normalized_program == "git" && normalized_args == ["status", "--short", "--branch"])
+        || (normalized_program == "winget" && (trusted_install_args || trusted_status_args))
+        || (normalized_program == "npm" && normalized_args == ["run", "workflow:selftest"])
         || (normalized_program == "npm" && normalized_args == ["run", "build"])
         || (normalized_program == "npm" && normalized_args == ["run", "tauri", "--", "build"])
         || (normalized_program == "cargo" && normalized_args == ["test"]);
@@ -88,6 +125,31 @@ pub fn validate_whitelisted_command(program: &str, args: &[String]) -> Result<()
     } else {
         Err(format!("命令不在 ORION 白名单内: {} {}", program, args.join(" ")))
     }
+}
+
+fn trusted_winget_package_ids() -> &'static [&'static str] {
+    &["bytedance.feishu", "bytedance.lark"]
+}
+
+pub fn run_whitelisted_command(input: WhitelistedCommandInput) -> Result<WhitelistedCommandResult, String> {
+    validate_whitelisted_command(&input.program, &input.args)?;
+    let cwd = match input.cwd.as_ref().map(|value| value.trim()).filter(|value| !value.is_empty()) {
+        Some(value) => canonical_dir(value)?,
+        None => std::env::current_dir().map_err(|error| format!("读取当前目录失败: {error}"))?,
+    };
+    let output = Command::new(&input.program)
+        .args(&input.args)
+        .current_dir(&cwd)
+        .output()
+        .map_err(|error| format!("执行白名单命令失败: {error}"))?;
+    Ok(WhitelistedCommandResult {
+        program: input.program,
+        args: input.args,
+        cwd: cwd.display().to_string(),
+        status: output.status.code().unwrap_or(-1),
+        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+    })
 }
 
 pub fn orion_action_risk(kind: &str) -> &'static str {
@@ -199,8 +261,51 @@ mod tests {
     #[test]
     fn validates_whitelisted_commands() {
         assert!(validate_whitelisted_command("npm", &["run".to_string(), "build".to_string()]).is_ok());
+        assert!(validate_whitelisted_command("npm", &["--version".to_string()]).is_ok());
+        assert!(validate_whitelisted_command("winget", &[
+            "install".to_string(),
+            "--id".to_string(),
+            "ByteDance.Feishu".to_string(),
+            "--exact".to_string(),
+            "--accept-package-agreements".to_string(),
+            "--accept-source-agreements".to_string(),
+        ]).is_ok());
+        assert!(validate_whitelisted_command("winget", &[
+            "list".to_string(),
+            "--id".to_string(),
+            "ByteDance.Feishu".to_string(),
+            "--exact".to_string(),
+        ]).is_ok());
+        assert!(validate_whitelisted_command("winget", &[
+            "install".to_string(),
+            "--id".to_string(),
+            "Unknown.Client".to_string(),
+            "--exact".to_string(),
+        ]).is_err());
         assert!(validate_whitelisted_command("cargo", &["test".to_string()]).is_ok());
         assert!(validate_whitelisted_command("git", &["push".to_string()]).is_err());
+    }
+
+    #[test]
+    fn runs_whitelisted_command_and_rejects_unknown_command() {
+        let result = run_whitelisted_command(WhitelistedCommandInput {
+            program: "node".to_string(),
+            args: vec!["--version".to_string()],
+            cwd: None,
+        })
+        .unwrap();
+
+        assert_eq!(result.program, "node");
+        assert_eq!(result.args, vec!["--version".to_string()]);
+        assert_eq!(result.status, 0);
+        assert!(result.stdout.trim().starts_with('v'));
+
+        assert!(run_whitelisted_command(WhitelistedCommandInput {
+            program: "git".to_string(),
+            args: vec!["push".to_string()],
+            cwd: None,
+        })
+        .is_err());
     }
 
     #[test]

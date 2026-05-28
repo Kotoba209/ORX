@@ -14,7 +14,7 @@ use provider_config::{AgentBindingInput, AgentRunInput, AgentRunResult, Provider
 use serde::Serialize;
 use app_settings::AppSettings;
 use memory_rule_store::{MemoryRuleInput, MemoryRuleSnapshot};
-use orion_actions::{GeneratedArtifactWriteInput, GeneratedArtifactWriteResult, ProjectFileReadInput, ProjectFileReadResult};
+use orion_actions::{GeneratedArtifactWriteInput, GeneratedArtifactWriteResult, ProjectFileReadInput, ProjectFileReadResult, WhitelistedCommandInput, WhitelistedCommandResult};
 use task_archive::{ApprovalRecordInput, TaskArchiveFinishInput, TaskArchiveRef, TaskArchiveStartInput, TaskArtifactInput, TaskAttachmentInput, TaskAttachmentSaveResult};
 use workflow_config_store::WorkflowConfigSnapshot;
 use workflow::WorkflowStep;
@@ -184,6 +184,11 @@ fn orion_validate_whitelisted_command(program: String, args: Vec<String>) -> Res
 }
 
 #[tauri::command]
+fn orion_run_whitelisted_command(input: WhitelistedCommandInput) -> Result<WhitelistedCommandResult, String> {
+    orion_actions::run_whitelisted_command(input)
+}
+
+#[tauri::command]
 fn orion_action_risk(kind: String) -> String {
     orion_actions::orion_action_risk(&kind).to_string()
 }
@@ -220,6 +225,7 @@ pub fn run() {
             orion_read_project_file,
             orion_write_generated_artifact,
             orion_validate_whitelisted_command,
+            orion_run_whitelisted_command,
             orion_action_risk
         ])
         .run(tauri::generate_context!())

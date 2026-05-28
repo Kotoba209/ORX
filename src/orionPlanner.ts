@@ -2,6 +2,87 @@ import type { WorkflowDefinition } from "./workflowConfig.ts";
 import type { WorkflowStep } from "./workflowState.ts";
 import { createOrionAction, type OrionAction } from "./orionActions.ts";
 
+export type OrionIntentMode = "workflow" | "assistant";
+
+export type OrionIntentContext = {
+  projectFiles?: string[];
+};
+
+export type OrionIntentDecision = {
+  mode: OrionIntentMode;
+  reason: string;
+};
+
+export type OrionAssistantResponse = {
+  mode: "assistant";
+  message: string;
+  actions: OrionAction[];
+};
+
+const codebaseMarkers = [
+  "package.json",
+  "cargo.toml",
+  "pyproject.toml",
+  "pom.xml",
+  "build.gradle",
+  "settings.gradle",
+  "go.mod",
+  "composer.json",
+  "requirements.txt",
+  "src/",
+];
+
+const trustedInstallPackages = [
+  {
+    name: "Feishu",
+    packageId: "ByteDance.Feishu",
+    aliases: ["feishu", "飞书"],
+  },
+  {
+    name: "Lark",
+    packageId: "ByteDance.Lark",
+    aliases: ["lark"],
+  },
+];
+
+export function classifyOrionIntent(task: string, context: OrionIntentContext = {}): OrionIntentDecision {
+  const normalized = task.trim().toLowerCase();
+
+  if (taskLooksLikeSoftwareWork(normalized)) {
+    return { mode: "workflow", reason: "task_mentions_software_work" };
+  }
+  if (taskLooksLikeLocalAssistantWork(normalized)) {
+    return { mode: "assistant", reason: "task_mentions_local_assistant_work" };
+  }
+  if (projectLooksLikeCodebase(context.projectFiles ?? [])) {
+    return { mode: "workflow", reason: "current_context_looks_like_codebase" };
+  }
+  return { mode: "assistant", reason: "no_development_intent_or_codebase_context" };
+}
+
+export function projectLooksLikeCodebase(projectFiles: string[]) {
+  return projectFiles.some((file) => {
+    const normalized = file.replace(/\\/g, "/").toLowerCase();
+    return codebaseMarkers.some((marker) => normalized === marker || normalized.endsWith(`/${marker}`) || normalized.startsWith(marker));
+  });
+}
+
+export function createOrionAssistantResponse(task: string): OrionAssistantResponse {
+  const normalized = task.trim();
+  const actions = createAssistantActions(normalized);
+  const actionSummary = actions.length > 0
+    ? `I prepared ${actions.length} local action draft${actions.length === 1 ? "" : "s"} for confirmation.`
+    : taskLooksLikeInstallWork(normalized)
+      ? "I could not match this client to a trusted installer package yet. Add it to the trusted installer catalog before running an install."
+    : "I will handle this as a local assistant conversation first and ask before doing anything that changes your machine.";
+
+  return {
+    mode: "assistant",
+    message: `ORION local assistant mode: ${actionSummary}`,
+    actions,
+  };
+}
+
 export function draftOrionWorkflow(task: string): WorkflowDefinition {
   if (/(bug|缺陷|报错|错误|异常|失败|修复|fix|崩溃)/i.test(task)) {
     return {
@@ -67,6 +148,92 @@ export function createOrionActionPlan(workflow: WorkflowDefinition): OrionAction
     ...skillActions,
     createOrionAction("workflow.run", "运行工作流", `启动 ORCH 执行：${workflow.name}`, { workflow_id: workflow.id }),
   ];
+}
+
+function taskLooksLikeSoftwareWork(task: string) {
+  return /(bug|defect|error|exception|failure|failed|fix|crash|implement|feature|develop|code|coding|refactor|test|unit test|integration test|e2e|需求|开发|实现|代码|修改|修复|缺陷|报错|错误|异常|失败|崩溃|测试|重构|页面|组件|接口|模块)/i.test(task);
+}
+
+function taskLooksLikeLocalAssistantWork(task: string) {
+  return /(install|setup|download|run|execute|command|shell|script|status|check|lookup|search|read docs|research|client|desktop client|安装|下载|客户端|执行|运行|命令|脚本|状态|查询|查阅|搜索|资料|文档|本机|电脑|环境|打开)/i.test(task);
+}
+
+function taskLooksLikeInstallWork(task: string) {
+  return /(install|setup|download|安装|下载|客户端)/i.test(task);
+}
+
+function createAssistantActions(task: string) {
+  if (/(run|execute|command|shell|script|执行|运行|命令|脚本)/i.test(task)) {
+    const command = parseWhitelistedCommandRequest(task);
+    return [
+      createOrionAction(
+        "command.runWhitelisted",
+        "Prepare command",
+        `Prepare a local command action for: ${task}`,
+        { ...command, request: task },
+      ),
+    ];
+  }
+  if (taskLooksLikeInstallWork(task)) {
+    const installPackage = resolveTrustedInstallPackage(task);
+    if (!installPackage) return [];
+    return [
+      createOrionAction(
+        "command.runWhitelisted",
+        "Prepare install command",
+        `Install ${installPackage.name} from the trusted winget catalog.`,
+        installerPayload(task, installPackage, ["install", "--id", installPackage.packageId, "--exact", "--accept-package-agreements", "--accept-source-agreements"]),
+      ),
+      createOrionAction(
+        "command.runWhitelisted",
+        "Verify installed client",
+        `Check whether ${installPackage.name} is visible to winget after installation.`,
+        installerPayload(task, installPackage, ["list", "--id", installPackage.packageId, "--exact"]),
+      ),
+    ];
+  }
+  if (/(lookup|search|read docs|research|查询|查阅|搜索|资料|文档)/i.test(task)) {
+    return [
+      createOrionAction(
+        "memory.search",
+        "Prepare research",
+        `Prepare a research lookup for: ${task}`,
+        { query: task },
+      ),
+    ];
+  }
+  return [];
+}
+
+function resolveTrustedInstallPackage(task: string) {
+  const normalized = task.toLowerCase();
+  return trustedInstallPackages.find((item) => item.aliases.some((alias) => normalized.includes(alias.toLowerCase())));
+}
+
+function installerPayload(task: string, installPackage: { name: string; packageId: string }, args: string[]) {
+  return {
+    program: "winget",
+    args,
+    cwd: "",
+    request: task,
+    package_id: installPackage.packageId,
+    package_name: installPackage.name,
+    source: "winget",
+  };
+}
+
+function parseWhitelistedCommandRequest(task: string) {
+  const commandText = task
+    .trim()
+    .replace(/^(run|execute|command|shell|script)\s+/i, "")
+    .replace(/^(执行|运行|命令|脚本)\s*/, "")
+    .trim();
+  const parts = commandText.match(/"[^"]+"|'[^']+'|\S+/g)?.map((part) => part.replace(/^["']|["']$/g, "")) ?? [];
+  return {
+    program: parts[0] ?? "",
+    args: parts.slice(1),
+    cwd: "",
+  };
 }
 
 function step(stage: string, owner: string, instruction: string): WorkflowStep {
