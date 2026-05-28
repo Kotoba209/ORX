@@ -80,6 +80,52 @@ test("assistant response drafts non-workflow actions without creating workflow a
   });
 });
 
+test("assistant response maps project health checks to status selftest and build commands", () => {
+  const response = createOrionAssistantResponse("检查项目状态和构建");
+
+  assert.equal(response.mode, "assistant");
+  assert.deepEqual(response.actions.map((action) => action.kind), [
+    "command.runWhitelisted",
+    "command.runWhitelisted",
+    "command.runWhitelisted",
+  ]);
+  assert.deepEqual(response.actions.map((action) => action.payload), [
+    {
+      program: "git",
+      args: ["status", "--short", "--branch"],
+      cwd: "",
+      request: "检查项目状态和构建",
+      command_role: "project-status",
+    },
+    {
+      program: "npm",
+      args: ["run", "workflow:selftest"],
+      cwd: "",
+      request: "检查项目状态和构建",
+      command_role: "project-selftest",
+    },
+    {
+      program: "npm",
+      args: ["run", "build"],
+      cwd: "",
+      request: "检查项目状态和构建",
+      command_role: "project-build",
+    },
+  ]);
+});
+
+test("assistant response maps tool version checks to exact version commands", () => {
+  const response = createOrionAssistantResponse("检查 Node npm Rust Cargo 环境版本");
+
+  assert.equal(response.mode, "assistant");
+  assert.deepEqual(response.actions.map((action) => action.payload), [
+    { program: "node", args: ["--version"], cwd: "", request: "检查 Node npm Rust Cargo 环境版本", command_role: "node-version" },
+    { program: "npm", args: ["--version"], cwd: "", request: "检查 Node npm Rust Cargo 环境版本", command_role: "npm-version" },
+    { program: "rustc", args: ["-V"], cwd: "", request: "检查 Node npm Rust Cargo 环境版本", command_role: "rustc-version" },
+    { program: "cargo", args: ["-V"], cwd: "", request: "检查 Node npm Rust Cargo 环境版本", command_role: "cargo-version" },
+  ]);
+});
+
 test("assistant response maps trusted client install requests to exact winget actions", () => {
   const response = createOrionAssistantResponse("install Feishu desktop client");
 

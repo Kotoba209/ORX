@@ -50,6 +50,7 @@ import { classifyOrionIntent, createOrionActionPlan, createOrionAssistantRespons
 import { groupOrionActionsByRisk, type OrionAction, type OrionRiskLevel } from "./orionActions";
 import { actionRiskSummary, formatOrionPayloadPreview, highestOrionRisk, isOrionPlanAllowedBySession, orionRiskLabel } from "./orionPermission";
 import { monitorOrionNodeResult, type OrionSuggestedAction } from "./orionRunMonitor";
+import { formatWhitelistedCommandResult, shouldStopAfterCommandResult, type WhitelistedCommandResult } from "./orionCommandResults";
 
 type ProjectSummary = { root: string; files: ProjectFile[]; source_count: number; test_count: number; important_files: string[]; context_brief: string };
 type RegisteredProject = { id: string; name: string; path: string; source_count: number; test_count: number; context_brief: string; updated_at: number };
@@ -74,7 +75,6 @@ type ApprovalGate = { step: WorkflowStep; stepIndex: number; result: AgentRunRes
 type ClarificationGate = { step: WorkflowStep; stepIndex: number; result: AgentRunResult; runtime: WorkflowRuntime; prompt: string };
 type OrionPendingPlan = { task: string; workflow: WorkflowDefinition; actions: OrionAction[] };
 type OrionPendingAssistant = { task: string; message: string; actions: OrionAction[] };
-type WhitelistedCommandResult = { program: string; args: string[]; cwd: string; status: number; stdout: string; stderr: string };
 type InspectorView = "output" | "context" | "files";
 type ConfigPanel = "provider" | "workflow" | "settings" | null;
 type ContextMenuState =
@@ -1099,12 +1099,18 @@ function App() {
     for (const action of pending.actions) {
       try {
         const result = await executeOrionAssistantAction(action);
-        setChatLines((lines) => [...lines, `ORION：${result}`]);
-        setLogLines((lines) => [...lines, `ORION assistant action done: ${action.kind}`, result]);
+        setChatLines((lines) => [...lines, `ORION：${result.message}`]);
+        setLogLines((lines) => [...lines, `ORION assistant action done: ${action.kind}`, result.message]);
+        if (result.stop) {
+          setChatLines((lines) => [...lines, "ORION：已停止后续本机助手动作，避免在失败状态下继续执行。"]);
+          setLogLines((lines) => [...lines, "ORION assistant action sequence stopped after failed command."]);
+          break;
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         setChatLines((lines) => [...lines, `ORION：动作执行失败：${message}`]);
         setLogLines((lines) => [...lines, `ORION assistant action failed: ${action.kind}`, message]);
+        break;
       }
     }
   }
@@ -1117,7 +1123,7 @@ function App() {
     setRequirement("");
   }
 
-  async function executeOrionAssistantAction(action: OrionAction) {
+  async function executeOrionAssistantAction(action: OrionAction): Promise<{ message: string; stop: boolean }> {
     if (action.kind === "command.runWhitelisted") {
       if (!canUseTauriCommands()) {
         throw new Error("需要在 Tauri 客户端中执行本机命令；浏览器预览不可用。");
@@ -1125,24 +1131,28 @@ function App() {
       const program = typeof action.payload.program === "string" ? action.payload.program : "";
       const args = Array.isArray(action.payload.args) ? action.payload.args.filter((item): item is string => typeof item === "string") : [];
       if (!program) {
-        return "这个本机命令还没有解析出可执行程序；安装类动作需要先接入明确的软件源白名单。";
+        return { message: "这个本机命令还没有解析出可执行程序；安装类动作需要先接入明确的软件源白名单。", stop: true };
       }
       const cwd = typeof action.payload.cwd === "string" && action.payload.cwd.trim() ? action.payload.cwd : projectPath;
       const result = await invoke<WhitelistedCommandResult>("orion_run_whitelisted_command", {
         input: { program, args, cwd },
       });
-      const command = [result.program, ...result.args].join(" ");
-      const output = previewOutput(`${result.stdout}${result.stderr ? `\n${result.stderr}` : ""}`) || "命令没有输出。";
-      return `命令完成：${command}，退出码 ${result.status}，目录 ${result.cwd}\n${output}`;
+      return {
+        message: formatWhitelistedCommandResult(result),
+        stop: shouldStopAfterCommandResult(result),
+      };
     }
     if (action.kind === "memory.search") {
       const query = typeof action.payload.query === "string" ? action.payload.query : "";
       const matches = retrieveRelevantMemoryRules(query, summary?.context_brief ?? "", memoryRules);
-      return matches.length > 0
-        ? `本地记忆命中：${matches.map((rule) => rule.title).join("；")}`
-        : "本地记忆没有命中相关资料；联网查阅能力还未接入。";
+      return {
+        message: matches.length > 0
+          ? `本地记忆命中：${matches.map((rule) => rule.title).join("；")}`
+          : "本地记忆没有命中相关资料；联网查阅能力还未接入。",
+        stop: false,
+      };
     }
-    return `已跳过暂未支持的本机助手动作：${action.kind}`;
+    return { message: `已跳过暂未支持的本机助手动作：${action.kind}`, stop: false };
   }
 
   function rejectOrionPendingPlan(inputText = "驳回") {

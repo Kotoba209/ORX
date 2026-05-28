@@ -262,6 +262,9 @@ mod tests {
     fn validates_whitelisted_commands() {
         assert!(validate_whitelisted_command("npm", &["run".to_string(), "build".to_string()]).is_ok());
         assert!(validate_whitelisted_command("npm", &["--version".to_string()]).is_ok());
+        assert!(validate_whitelisted_command("rustc", &["-V".to_string()]).is_ok());
+        assert!(validate_whitelisted_command("cargo", &["-V".to_string()]).is_ok());
+        assert!(validate_whitelisted_command("rustc", &["--version".to_string()]).is_err());
         assert!(validate_whitelisted_command("winget", &[
             "install".to_string(),
             "--id".to_string(),

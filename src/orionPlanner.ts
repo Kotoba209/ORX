@@ -163,6 +163,9 @@ function taskLooksLikeInstallWork(task: string) {
 }
 
 function createAssistantActions(task: string) {
+  if (taskLooksLikeProjectHealthCheck(task)) {
+    return projectHealthActions(task);
+  }
   if (/(run|execute|command|shell|script|执行|运行|命令|脚本)/i.test(task)) {
     const command = parseWhitelistedCommandRequest(task);
     return [
@@ -173,6 +176,9 @@ function createAssistantActions(task: string) {
         { ...command, request: task },
       ),
     ];
+  }
+  if (taskLooksLikeVersionCheck(task)) {
+    return toolVersionActions(task);
   }
   if (taskLooksLikeInstallWork(task)) {
     const installPackage = resolveTrustedInstallPackage(task);
@@ -203,6 +209,50 @@ function createAssistantActions(task: string) {
     ];
   }
   return [];
+}
+
+function commandPayload(task: string, program: string, args: string[], commandRole: string) {
+  return { program, args, cwd: "", request: task, command_role: commandRole };
+}
+
+function projectHealthActions(task: string) {
+  return [
+    createOrionAction(
+      "command.runWhitelisted",
+      "Check Git status",
+      "Check the current branch and working tree before running project checks.",
+      commandPayload(task, "git", ["status", "--short", "--branch"], "project-status"),
+    ),
+    createOrionAction(
+      "command.runWhitelisted",
+      "Run workflow self-tests",
+      "Run the ORX workflow self-test suite.",
+      commandPayload(task, "npm", ["run", "workflow:selftest"], "project-selftest"),
+    ),
+    createOrionAction(
+      "command.runWhitelisted",
+      "Run production build",
+      "Run the TypeScript and Vite production build.",
+      commandPayload(task, "npm", ["run", "build"], "project-build"),
+    ),
+  ];
+}
+
+function toolVersionActions(task: string) {
+  return [
+    createOrionAction("command.runWhitelisted", "Check Node version", "Check the local Node.js version.", commandPayload(task, "node", ["--version"], "node-version")),
+    createOrionAction("command.runWhitelisted", "Check npm version", "Check the local npm version.", commandPayload(task, "npm", ["--version"], "npm-version")),
+    createOrionAction("command.runWhitelisted", "Check Rust version", "Check the local Rust compiler version.", commandPayload(task, "rustc", ["-V"], "rustc-version")),
+    createOrionAction("command.runWhitelisted", "Check Cargo version", "Check the local Cargo version.", commandPayload(task, "cargo", ["-V"], "cargo-version")),
+  ];
+}
+
+function taskLooksLikeProjectHealthCheck(task: string) {
+  return /(health|healthy|status.*build|test.*build|build.*test|check.*project|project.*check|检查.*(项目|状态|构建|测试)|项目.*(状态|构建|测试|健康))/i.test(task);
+}
+
+function taskLooksLikeVersionCheck(task: string) {
+  return /(version|versions|environment|toolchain|node|npm|rust|cargo|环境|版本|工具链)/i.test(task);
 }
 
 function resolveTrustedInstallPackage(task: string) {
