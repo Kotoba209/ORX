@@ -200,6 +200,7 @@ function App() {
   const [providerForm, setProviderForm] = useState<ProviderConfig>({ id: "gpt-local", name: "GPT Local", kind: "openai-compatible", api_protocol: "responses", base_url: "http://127.0.0.1:8317/v1", use_proxy_route: true, proxy_url: "http://127.0.0.1:7897", model: "gpt-5.5", api_key_ref: "GPT_LOCAL_API_KEY" });
   const [agentForm, setAgentForm] = useState<AgentBinding>({ role: "developer", provider_id: "gpt-local", model: "gpt-5.5", temperature: 0.2 });
   const [inspectorView, setInspectorView] = useState<InspectorView>("output");
+  const [inspectorCollapsed, setInspectorCollapsed] = useState(true);
   const [configPanel, setConfigPanel] = useState<ConfigPanel>(null);
   const [providerTestResult, setProviderTestResult] = useState<ProviderConnectionResult | null>(null);
   const [appSettings, setAppSettings] = useState<AppSettings>({ artifact_output_dir: "" });
@@ -222,7 +223,6 @@ function App() {
   const [clarificationGate, setClarificationGate] = useState<ClarificationGate | null>(null);
   const [orionPendingPlan, setOrionPendingPlan] = useState<OrionPendingPlan | null>(null);
   const [orionPendingAssistant, setOrionPendingAssistant] = useState<OrionPendingAssistant | null>(null);
-  const [orionSessionAllowedRisk, setOrionSessionAllowedRisk] = useState<OrionRiskLevel | null>(null);
   const [orionSuggestions, setOrionSuggestions] = useState<OrionSuggestedAction[]>([]);
   const [currentActivity, setCurrentActivity] = useState("");
   const [approvalNote, setApprovalNote] = useState("");
@@ -250,6 +250,19 @@ function App() {
       total_tokens: finished.reduce((total, metric) => total + metric.total_tokens, 0),
     };
   }, [workflowMetrics]);
+  const workflowProgressSteps = useMemo(() => steps
+    .filter((step) => step.enabled !== false)
+    .map((step, index) => {
+      const metric = [...workflowMetrics].reverse().find((item) => item.owner === step.owner && item.stage === step.stage);
+      return {
+        index,
+        owner: step.owner,
+        stage: step.stage,
+        status: metric?.status ?? "pending",
+        elapsed_ms: metric?.elapsed_ms ?? 0,
+        preview: metric?.output_preview ?? step.instruction,
+      };
+    }), [steps, workflowMetrics]);
 
   useEffect(() => { void loadProjects(); void loadProviderConfig(); void loadAppSettings(); void loadWorkflowConfig(); void loadMemoryRules(); }, []);
   useEffect(() => {
@@ -1184,6 +1197,8 @@ function App() {
       };
     }
     return { message: `已跳过暂未支持的本机助手动作：${action.kind}`, stop: false };
+  }
+
   async function saveOrionPendingPlanOnly() {
     if (!orionPendingPlan) return;
     const nextPlan = applyOrionPlanModification(orionPendingPlan, "save_only");
@@ -1516,17 +1531,32 @@ function App() {
     setWorkflows((items) => updateWorkflow(items, activeWorkflowId, patch));
   }
 
+  function renderFolderIcon() {
+    return <svg className="tree-icon folder-icon" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M3.5 7.2h6.1l1.7 2h9.2v8.3a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2V7.2Z" />
+      <path d="M3.5 7.2V6.5a2 2 0 0 1 2-2h4.1l1.7 2h7.2a2 2 0 0 1 2 2v.7" />
+    </svg>;
+  }
+
+  function renderFileIcon() {
+    return <svg className="tree-icon file-icon" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M7 3.5h6.7L18 7.8V19a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 6 19V5A1.5 1.5 0 0 1 7.5 3.5Z" />
+      <path d="M13.5 3.7v4.4h4.3" />
+    </svg>;
+  }
+
   function renderFileTree(nodes: FileTreeNode[], depth = 0) {
     return nodes.map((node) => {
       const isDirectory = node.kind === "directory";
       const isExpanded = expandedPaths.has(node.path);
       const isSelected = workspaceFilePaths.has(node.path);
+      const indent = 12 + depth * 18;
       if (isDirectory) {
         return <div className="tree-group" key={node.path}>
           <button
             type="button"
             className="tree-row directory"
-            style={{ paddingLeft: 8 + depth * 14 }}
+            style={{ paddingLeft: indent }}
             onClick={() => toggleTreePath(node.path)}
             onContextMenu={(event) => {
               event.preventDefault();
@@ -1534,7 +1564,7 @@ function App() {
             }}
             title={`${node.path} · 右键加入工作区`}
           >
-            <span>{isExpanded ? "▾" : "▸"}</span><strong>{node.name}</strong>
+            <span className="tree-caret">{isExpanded ? "▾" : "▸"}</span>{renderFolderIcon()}<strong className="tree-label">{node.name}</strong>
           </button>
           {isExpanded && <div>{renderFileTree(node.children, depth + 1)}</div>}
         </div>;
@@ -1542,7 +1572,7 @@ function App() {
       return <button
         type="button"
         className={`tree-row file ${isSelected ? "selected" : ""}`}
-        style={{ paddingLeft: 8 + depth * 14 }}
+        style={{ paddingLeft: indent }}
         key={node.path}
         title={`${node.path} · 右键${isSelected ? "移出" : "加入"}工作区`}
         onDoubleClick={() => addFileToWorkspace({ path: node.path, kind: node.kind, bytes: node.bytes })}
@@ -1551,7 +1581,7 @@ function App() {
           setContextMenu({ kind: "file", x: event.clientX, y: event.clientY, file: { path: node.path, kind: node.kind, bytes: node.bytes } });
         }}
       >
-        <span>{isSelected ? "●" : "·"}</span><strong>{node.name}</strong><em>{node.kind}</em>
+        <span className="tree-caret placeholder"></span>{renderFileIcon()}<strong className="tree-label">{node.name}</strong><em>{node.kind || "support"}</em>
       </button>;
     });
   }
@@ -1613,17 +1643,26 @@ function App() {
     return `\n\n[ORION 转交给 ${step.owner} / ${step.stage} 的补充指令]\n${step.orion_notes.map((note) => `- ${note}`).join("\n")}`;
   }
 
+  const shellClassName = inspectorCollapsed ? "app-shell inspector-collapsed" : "app-shell";
+  const shouldShowWorkflowProgressFloat = workflowMetrics.length > 0
+    && inspectorCollapsed
+    && !approvalGate
+    && !configPanel
+    && !orionPendingPlan
+    && !orionPendingAssistant
+    && !pendingMemoryCandidate;
+
   return (
-    <main className="app-shell" onClick={() => { setContextMenu(null); setWorkflowMenuOpen(false); }}>
+    <main className={shellClassName} onClick={() => { setContextMenu(null); setWorkflowMenuOpen(false); }}>
       <aside className="sidebar">
+        <div className="sidebar-kicker">WORKSPACES</div>
         <nav className="sidebar-nav" aria-label="主导航">
           <button type="button" onClick={() => setConfigPanel("workflow")}><span>⌁</span>工作流</button>
           <button type="button" onClick={() => setConfigPanel("provider")}><span>◇</span>模型服务</button>
           <button type="button" onClick={() => setConfigPanel("settings")}><span>·</span>设置</button>
         </nav>
         <section className="project-panel">
-          <div className="sidebar-section-title"><span>项目</span></div>
-          <button className="project-picker-button" type="button" onClick={addCurrentProject}>选择项目文件夹</button>
+          <div className="sidebar-section-title"><span>项目</span><button className="project-add-button" type="button" onClick={addCurrentProject} aria-label="新增项目" title="新增项目">+</button></div>
           <p className="project-path-hint" title={projectPath}>{projectPath}</p>
           <div className="project-list" aria-label="已保存项目">
             {projects.length === 0 ? <p>暂无已保存项目。</p> : projects.map((project) => {
@@ -1639,7 +1678,7 @@ function App() {
                   event.preventDefault();
                   setContextMenu({ kind: "project", x: event.clientX, y: event.clientY, project });
                 }}
-              ><span className="project-caret">{projectExpanded ? "▾" : "▸"}</span><span>{project.name}</span><em>{project.source_count} src / {project.test_count} test</em></button>
+              ><span className="project-caret tree-caret">{projectExpanded ? "▾" : "▸"}</span>{renderFolderIcon()}<span className="project-name">{project.name}</span><em>{project.source_count} src / {project.test_count} test</em></button>
               {projectExpanded && <div className="conversation-list">
                 {projectConversations.length === 0 ? <p>右键项目新建对话</p> : projectConversations.map((conversation) => <button
                   type="button"
@@ -1659,23 +1698,33 @@ function App() {
       </aside>
 
       <section className="workspace">
+        <header className="workspace-topbar">
+          <div className="workspace-session">
+            <span>ORX</span>
+            <em>{activeWorkflow?.name ?? "Workflow"}</em>
+          </div>
+        </header>
         <section className="terminal-log" aria-label="ORCH 对话">
           <div className="flow-column" aria-label="系统输出流">
             {chatTimelineItems.map((item, index) => item.side === "user"
               ? <article className="user-message-row" key={`chat-${item.text}-${index}`}><div className="user-message-bubble">{item.text}</div></article>
               : <p className={item.tone === "error" ? "error-line" : "system-line"} key={`chat-${item.text}-${index}`}><span>$</span><span className="line-text">{item.text}</span></p>
             )}
-            {workflowMetrics.length > 0 && <div className="activity-stream" aria-label="流程统计流">
-              <div className="activity-summary"><strong>Flow</strong><span>{workflowMetrics.filter((metric) => metric.status === "done").length}/{workflowMetrics.length} done</span><span>{formatDuration(workflowTotals.elapsed_ms)}</span></div>
-              {workflowMetrics.slice(-5).map((metric, index) => <article className={`activity-event ${metric.status}`} key={`${metric.stage}-${metric.owner}-${index}`}>
-                <strong>{metric.status === "running" ? "Running" : metric.status === "failed" ? "Blocked" : "Done"}</strong>
-                <span>{metric.owner} / {metric.stage}</span>
-                <em>{metric.elapsed_ms ? formatDuration(metric.elapsed_ms) : "..."}</em>
-              </article>)}
-            </div>}
             {(workflowRunning || approvalGate || clarificationGate) && <p className="thinking-line" aria-live="polite"><span>$</span><span className="thinking-content">{currentActivity || "ORCH 处理中"}{workflowRunning && <><i></i><i></i><i></i></>}</span></p>}
           </div>
         </section>
+        {shouldShowWorkflowProgressFloat && <aside className="workflow-progress-float" aria-label="流程流转进度">
+          <header>
+            <div><strong>流程进度</strong><span>{activeWorkflow?.name ?? "Workflow"}</span></div>
+            <em>{workflowProgressSteps.filter((step) => step.status === "done").length}/{workflowProgressSteps.length}</em>
+          </header>
+          <div className="workflow-progress-list">
+            {workflowProgressSteps.map((step) => <article className={`workflow-progress-step ${step.status}`} key={`${step.owner}-${step.stage}-${step.index}`}>
+              <span className="workflow-progress-icon" aria-hidden="true">{step.status === "done" ? "✓" : step.status === "failed" ? "!" : ""}</span>
+              <div><strong>{step.owner} / {step.stage}</strong><small>{step.status === "running" ? currentActivity || "正在运行" : step.status === "done" ? formatDuration(step.elapsed_ms) : step.status === "failed" ? "已停止" : "等待中"}</small></div>
+            </article>)}
+          </div>
+        </aside>}
         <form
           className={`composer${composerDragActive ? " drag-active" : ""}`}
           onSubmit={(event) => { event.preventDefault(); void handleComposerSubmit(); }}
@@ -1736,7 +1785,7 @@ function App() {
               <button type="button" aria-label={`移除附件 ${attachment.name}`} onClick={() => removePendingAttachment(attachment.id)}>×</button>
             </div>)}
           </div>}
-          <textarea value={requirement} placeholder={clarificationGate ? "直接回答 Trellis 的澄清问题" : "Assign a task to ORCH，或粘贴/拖入文件"} onPaste={handleComposerPaste} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} onChange={(event) => setRequirement(event.target.value)} aria-label="需求描述" />
+          <textarea value={requirement} placeholder={clarificationGate ? "直接回答 Trellis 的澄清问题" : "告诉 ORION 你想做什么，或粘贴/拖入文件"} onPaste={handleComposerPaste} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} onChange={(event) => setRequirement(event.target.value)} aria-label="需求描述" />
           <div className="composer-toolbar">
             <div className="template-picker" onClick={(event) => event.stopPropagation()}>
               <button type="button" aria-haspopup="listbox" aria-expanded={workflowMenuOpen} onClick={() => setWorkflowMenuOpen((open) => !open)}>{activeWorkflow?.name ?? "选择工作流"}</button>
@@ -1744,47 +1793,64 @@ function App() {
                 {workflows.map((workflow) => <button type="button" role="option" aria-selected={activeWorkflowId === workflow.id} key={workflow.id} onClick={() => { setActiveWorkflowId(workflow.id); setWorkflowMenuOpen(false); }}>{workflow.name}{workflow.isDefault ? " · 默认" : ""}</button>)}
               </div>}
             </div>
-            <button type="submit" className={workflowRunning ? "stop-workflow-button" : ""} aria-label={workflowRunning ? "终止当前流程" : approvalGate ? "提交审批意见" : clarificationGate ? "提交澄清回答" : "启动工作流"} title={workflowRunning ? "终止当前流程" : "启动工作流"}>{workflowRunning ? "■" : "↑"}</button>
+            <button type="submit" className={workflowRunning ? "stop-workflow-button" : ""} aria-label={workflowRunning ? "终止当前流程" : approvalGate ? "提交审批意见" : clarificationGate ? "提交澄清回答" : "启动工作流"} title={workflowRunning ? "终止当前流程" : "启动工作流"}>{workflowRunning ? "" : "↑"}</button>
           </div>
         </form>
       </section>
 
       <aside className="context-panel">
+        <div className="inspector-shell-controls">
+          <button type="button" className="inspector-toggle-button" aria-label={inspectorCollapsed ? "展开右侧栏" : "收起右侧栏"} title={inspectorCollapsed ? "展开右侧栏" : "收起右侧栏"} onClick={(event) => { event.stopPropagation(); setInspectorCollapsed((collapsed) => !collapsed); }}>{inspectorCollapsed ? "◧" : "◨"}</button>
+        </div>
+        <div className="inspector-content">
         <div className="inspector-tabs" role="tablist" aria-label="右侧信息切换"><button type="button" className={inspectorView === "output" ? "active" : ""} onClick={() => setInspectorView("output")}>输出</button><button type="button" className={inspectorView === "context" ? "active" : ""} onClick={() => setInspectorView("context")}>上下文</button><button type="button" className={inspectorView === "files" ? "active" : ""} onClick={() => setInspectorView("files")}>项目文件</button></div>
-        {inspectorView === "output" && <section className="panel inspector-card detail-output"><h2>Detailed Output</h2>
+        {inspectorView === "output" && <section className="panel inspector-card detail-output"><h2>输出详情</h2>
           <div className="run-summary">
-            <span>wall {workflowStartedAt ? formatDuration((workflowRunning ? Date.now() : Date.now()) - workflowStartedAt) : "0ms"}</span>
-            <span>agent {formatDuration(workflowTotals.elapsed_ms)}</span>
-            <span>in {workflowTotals.input_tokens || "未返回"}</span>
-            <span>out {workflowTotals.output_tokens || "未返回"}</span>
-            <span>total {workflowTotals.total_tokens || "未返回"}</span>
+            <span>总耗时 {workflowStartedAt ? formatDuration((workflowRunning ? Date.now() : Date.now()) - workflowStartedAt) : "0ms"}</span>
+            <span>节点耗时 {formatDuration(workflowTotals.elapsed_ms)}</span>
+            <span>输入 {workflowTotals.input_tokens || "未返回"}</span>
+            <span>输出 {workflowTotals.output_tokens || "未返回"}</span>
+            <span>总计 {workflowTotals.total_tokens || "未返回"}</span>
           </div>
           {orionPendingPlan && renderOrionWorkflowPreview(orionPendingPlan)}
           {orionPendingAssistant && renderOrionAssistantPreview(orionPendingAssistant)}
-          {orionSuggestions.length > 0 && <article className="orion-suggestions">
-            <header><strong>ORION Run Monitor</strong><span>{orionSuggestions.length} suggestions</span></header>
+          {orionSuggestions.length > 0 && <details className="orion-suggestions" open>
+            <summary><strong>ORION 运行建议</strong><span>{orionSuggestions.length} 条</span></summary>
             {orionSuggestions.map((suggestion) => <section className={`orion-suggestion ${suggestion.kind}`} key={suggestion.id}>
               <div><strong>{suggestion.title}</strong><em>{suggestion.kind}</em></div>
               <p>{suggestion.summary}</p>
               <span>{suggestion.targetOwner} / {suggestion.targetStage}</span>
               <small>{suggestion.reason}</small>
             </section>)}
-          </article>}
+          </details>}
           {approvalGate && <article className="approval-hint"><strong>等待审批</strong><span>{approvalGate.step.owner} / {approvalGate.step.stage}</span><p>审批预览已在中间弹窗打开。</p></article>}
           {clarificationGate && <article className="approval-hint"><strong>等待澄清</strong><span>{clarificationGate.step.owner} / {clarificationGate.step.stage}</span><p>Trellis 正在追问需求，直接回复即可。</p></article>}
           {taskArchive && <p>task archive: {taskArchive.path}</p>}
-          {workflowMetrics.map((metric, index) => <article className={`metric-row ${metric.status}`} key={`${metric.stage}-${metric.owner}-${index}`}>
-            <header><strong>{metric.owner}</strong><span>{metric.stage}</span><em>{metric.status === "running" ? "running" : metric.status === "done" ? "done" : "failed"}</em></header>
-            <p>耗时 {metric.elapsed_ms ? formatDuration(metric.elapsed_ms) : "-"} · input {metric.input_tokens || "未返回"} · output {metric.output_tokens || "未返回"} · total {metric.total_tokens || "未返回"}</p>
-            <p>{metric.output_preview}</p>
-          </article>)}
+          {workflowMetrics.length > 0 && <article className="output-focus-card">
+            <header><strong>当前流程摘要</strong><span>{workflowMetrics.filter((metric) => metric.status === "done").length}/{workflowProgressSteps.length} done</span></header>
+            <p>{workflowMetrics[workflowMetrics.length - 1]?.output_preview ?? currentActivity}</p>
+          </article>}
+          {workflowMetrics.length > 0 && <details className="metric-details">
+            <summary>节点详细输出 · {workflowMetrics.length}</summary>
+            {workflowMetrics.map((metric, index) => <article className={`metric-row ${metric.status}`} key={`${metric.stage}-${metric.owner}-${index}`}>
+              <header><strong>{metric.owner}</strong><span>{metric.stage}</span><em>{metric.status === "running" ? "running" : metric.status === "done" ? "done" : "failed"}</em></header>
+              <p>耗时 {metric.elapsed_ms ? formatDuration(metric.elapsed_ms) : "-"} · input {metric.input_tokens || "未返回"} · output {metric.output_tokens || "未返回"} · total {metric.total_tokens || "未返回"}</p>
+              <p>{metric.output_preview}</p>
+            </article>)}
+          </details>}
           {error && <p className="error-line">当前错误：{error}</p>}
-          {latestOutput.map((line, index) => <p className={line.includes("失败") || line.includes("error=") || line.includes("HTTP ") ? "error-line" : ""} key={`${line}-${index}`}>{line}</p>)}
-          <h2 className="system-log-title">System Logs</h2>
-          {logLines.slice(0, 4).map((line, index) => <p key={`system-${line}-${index}`}>{line}</p>)}
+          <details className="log-details">
+            <summary>最近输出 · {latestOutput.length}</summary>
+            {latestOutput.slice(-10).map((line, index) => <p className={line.includes("失败") || line.includes("error=") || line.includes("HTTP ") ? "error-line" : ""} key={`${line}-${index}`}>{line}</p>)}
+          </details>
+          <details className="log-details">
+            <summary>系统日志</summary>
+            {logLines.slice(0, 6).map((line, index) => <p key={`system-${line}-${index}`}>{line}</p>)}
+          </details>
         </section>}
         {inspectorView === "context" && <section className="panel inspector-card"><h2>上下文摘要</h2><p>{summary?.context_brief ?? "添加项目后，这里展示 README、manifest、源码和测试文件摘要。"}</p>{summary?.project_profile && <div className="project-profile"><h3>项目画像</h3><p>{projectProfileBrief(summary.project_profile)}</p></div>}<div className="stats"><span>src {summary?.source_count ?? 0}</span><span>test {summary?.test_count ?? 0}</span><span>workspace {workspaceFiles.length}</span></div>{workspaceFiles.length > 0 && <div className="workspace-files"><h3>工作区上下文</h3>{workspaceFiles.map((file) => <button type="button" key={file.path} onClick={() => removeFileFromWorkspace(file.path)} title="点击移出工作区"><span>{file.path}</span><em>移出</em></button>)}</div>}</section>}
         {inspectorView === "files" && <section className="panel inspector-card file-list"><h2>项目文件</h2><p>右键文件或文件夹加入工作区，双击文件快速加入。</p>{fileTree.length === 0 ? <p>等待扫描。</p> : <div className="file-tree">{renderFileTree(fileTree)}</div>}</section>}
+        </div>
       </aside>
 
       {contextMenu && <div className="file-context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} onClick={(event) => event.stopPropagation()}>

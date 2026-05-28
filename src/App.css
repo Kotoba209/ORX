@@ -2353,11 +2353,2349 @@ body,
   gap: 8px;
 }
 
+/* ORX light workspace pass */
+:root {
+  --app-bg: #f6f6f7;
+  --surface: #ffffff;
+  --surface-muted: #f0f0f2;
+  --surface-soft: #fafafa;
+  --border: #e5e5e8;
+  --border-strong: #d8d8de;
+  --text-primary: #1f1f23;
+  --text-secondary: #6f6f78;
+  --text-muted: #a0a0aa;
+  --accent: #5b5cf6;
+  --accent-soft: #ececff;
+  --accent-border: #c8c9ff;
+  --warning: #f59e0b;
+  --danger: #ef4444;
+  --success: #22c55e;
+  --radius-md: 16px;
+  --radius-lg: 22px;
+  --radius-xl: 28px;
+  --shadow-md: 0 8px 24px rgba(15, 15, 20, 0.08);
+  --shadow-lg: 0 20px 60px rgba(15, 15, 20, 0.12);
+  --sidebar-width: 320px;
+  --inspector-width: 420px;
+}
+
+body {
+  color: var(--text-primary);
+  background: var(--app-bg);
+}
+
+.app-shell,
+.workspace {
+  background: var(--app-bg);
+}
+
+.app-shell {
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr) var(--inspector-width);
+  color: var(--text-primary);
+  transition: grid-template-columns 220ms ease;
+}
+
+.app-shell.inspector-collapsed {
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr) 52px;
+}
+
+.sidebar {
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+  padding: 22px;
+  border-right: 1px solid #ececf0;
+  background: #fbfbfc;
+}
+
+.window-dots {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.window-dots span {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+}
+
+.window-dots span:nth-child(1) { background: #ff5f57; }
+.window-dots span:nth-child(2) { background: #ffbd2e; }
+.window-dots span:nth-child(3) { background: #28c840; }
+
+.sidebar-kicker,
+.sidebar-section-title {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 750;
+  letter-spacing: 0.14em;
+}
+
+.sidebar-kicker {
+  margin-bottom: 24px;
+}
+
+.sidebar-nav {
+  gap: 8px;
+  margin-bottom: 28px;
+}
+
+.sidebar-nav button,
+.project-picker-button,
+.project-row,
+.conversation-list button {
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  background: transparent;
+}
+
+.sidebar-nav button {
+  min-height: 38px;
+  padding: 0 12px;
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.sidebar-nav button span,
+.project-row span,
+.project-row .project-caret {
+  color: var(--accent);
+}
+
+.sidebar-nav button:hover,
+.project-row:hover,
+.conversation-list button:hover,
+.conversation-list button.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent-border);
+}
+
+.project-panel {
+  gap: 10px;
+}
+
+.project-picker-button {
+  min-height: 38px;
+  padding: 0 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-sm, 0 1px 2px rgba(0, 0, 0, 0.04));
+}
+
+.project-picker-button:hover {
+  background: var(--surface-muted);
+}
+
+.project-path-hint,
+.project-row em,
+.conversation-list p,
+.project-list p {
+  color: var(--text-muted);
+}
+
+.project-row {
+  min-height: 42px;
+  height: 42px;
+  max-height: 42px;
+  padding: 0 12px;
+  grid-template-columns: 14px 22px minmax(0, 1fr) auto;
+  gap: 7px;
+}
+
+.project-row > span:not(.tree-icon),
+.project-row em {
+  line-height: 42px;
+}
+
+.project-row > span:not(.tree-icon) {
+  color: var(--text-primary);
+}
+
+.conversation-list {
+  padding-left: 24px;
+}
+
+.conversation-list button {
+  min-height: 34px;
+  padding: 0 12px;
+  color: var(--text-secondary);
+}
+
+.workspace {
+  grid-template-rows: 74px minmax(0, 1fr) auto;
+}
+
+.workspace-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 0 34px;
+}
+
+.workspace-session,
+.workspace-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.workspace-session span,
+.workspace-session em,
+.workspace-session strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-session span,
+.workspace-session em {
+  color: var(--text-muted);
+  font-style: normal;
+}
+
+.workspace-session strong {
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 13px;
+}
+
+.workspace-actions button,
+.inspector-toggle-button {
+  min-height: 38px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-md);
+  padding: 0 16px;
+  font-weight: 650;
+}
+
+.workspace-actions button:hover,
+.inspector-toggle-button:hover {
+  border-color: var(--accent-border);
+  color: var(--accent);
+}
+
+.workspace-actions .inspector-toggle-button,
+.inspector-shell-controls .inspector-toggle-button {
+  width: 38px;
+  padding: 0;
+}
+
+.terminal-log {
+  max-width: 1080px;
+  width: min(100%, 1080px);
+  justify-self: center;
+  padding: 32px 34px 20px;
+  margin: 0;
+  background: transparent;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei UI", sans-serif;
+}
+
+.terminal-log p {
+  color: var(--text-primary);
+  font-size: 15px;
+}
+
+.terminal-log p span,
+.thinking-line {
+  color: var(--text-muted) !important;
+}
+
+.terminal-log p.system-line .line-text,
+.terminal-log p.error-line .line-text {
+  color: var(--text-primary);
+}
+
+.user-message-bubble,
+.terminal-log p.user-line .line-text {
+  border: 1px solid var(--border);
+  border-radius: 22px;
+  background: #232326;
+  color: #ffffff !important;
+  box-shadow: var(--shadow-sm, 0 1px 2px rgba(0, 0, 0, 0.04));
+}
+
+.activity-stream,
+.orion-preview,
+.approval-hint,
+.orion-suggestions,
+.metric-row {
+  border-color: var(--border);
+  background: var(--surface);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-md);
+}
+
+.composer {
+  width: min(100% - 68px, 1130px);
+  justify-self: center;
+  margin: 0 34px 22px;
+  padding: 18px 20px;
+  min-height: 132px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+}
+
+.composer.drag-active {
+  border-color: var(--accent);
+  background: #fbfbff;
+}
+
+.composer textarea {
+  min-height: 70px;
+  color: var(--text-primary);
+  font-size: 16px;
+}
+
+.composer textarea::placeholder {
+  color: var(--text-muted);
+}
+
+.template-picker > button {
+  color: var(--text-secondary);
+}
+
+.composer-toolbar > button {
+  width: 48px;
+  height: 48px;
+  min-height: 48px;
+  border: 0;
+  background: #a7a4ff;
+  color: #ffffff;
+  box-shadow: var(--shadow-md);
+  transition: transform 120ms ease, background 160ms ease;
+}
+
+.composer-toolbar > button:hover {
+  background: var(--accent);
+}
+
+.composer-toolbar > button:active {
+  transform: scale(0.98);
+}
+
+.composer-toolbar > button.stop-workflow-button {
+  border: 0;
+  background: #fee2e2;
+  color: var(--danger);
+}
+
+.orion-permission-request,
+.memory-candidate-request {
+  border: 1px solid var(--warning);
+  border-radius: var(--radius-lg);
+  background: #fffaf0;
+  box-shadow: var(--shadow-md);
+}
+
+.orion-permission-options {
+  display: grid;
+  gap: 8px;
+}
+
+.orion-permission-options button,
+.memory-candidate-options button {
+  min-height: 38px;
+  border-radius: 14px;
+}
+
+.context-panel {
+  position: relative;
+  grid-template-rows: auto minmax(0, 1fr);
+  border-left: 1px solid #ececf0;
+  background: #fbfbfc;
+  overflow: hidden;
+}
+
+.inspector-shell-controls {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  min-height: 58px;
+  padding: 10px 14px 0;
+}
+
+.inspector-content {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  opacity: 1;
+  transform: translateX(0);
+  transition: opacity 180ms ease, transform 220ms ease;
+}
+
+.app-shell.inspector-collapsed .inspector-content {
+  opacity: 0;
+  transform: translateX(14px);
+  pointer-events: none;
+}
+
+.app-shell.inspector-collapsed .context-panel {
+  background: var(--app-bg);
+}
+
+.inspector-tabs {
+  margin: 0 14px 12px;
+  min-height: 44px;
+  padding: 4px;
+  gap: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-muted);
+}
+
+.inspector-tabs button {
+  min-height: 34px;
+  border-radius: 12px;
+  color: var(--text-secondary);
+}
+
+.inspector-tabs button:hover {
+  background: var(--surface);
+}
+
+.inspector-tabs button.active {
+  background: var(--surface);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-sm, 0 1px 2px rgba(0, 0, 0, 0.04));
+}
+
+.inspector-card {
+  margin: 0 14px 14px;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-md);
+}
+
+.inspector-card h2,
+.detail-output h2,
+.workspace-files h3,
+.project-profile h3 {
+  color: var(--text-primary);
+}
+
+.inspector-card p,
+.detail-output p,
+.metric-row p,
+.workspace-files button,
+.tree-row,
+.run-summary span {
+  color: var(--text-secondary);
+}
+
+.run-summary span,
 .stats span {
-  background: #151515;
-  border-color: #242424;
-  color: #f4f4f5;
+  border-color: var(--border);
+  background: var(--surface-soft);
+  color: var(--text-secondary);
+}
+
+.workspace-files,
+.project-profile {
+  border-top-color: var(--border);
+}
+
+.tree-row:hover,
+.workspace-files button:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-shell,
+  .inspector-content,
+  .composer-toolbar > button {
+    transition: none;
+  }
+}
+
+/* UI refinement pass: dialogs, sidebar actions, and compact controls */
+.window-dots {
+  display: none;
+}
+
+.sidebar {
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+.sidebar-kicker {
+  margin-bottom: 18px;
+}
+
+.project-panel {
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+.sidebar-section-title {
+  min-height: 28px;
+}
+
+.project-add-button {
+  width: 26px;
+  height: 26px;
+  min-height: 26px;
+  display: grid;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 18px;
+  line-height: 1;
+  opacity: 0;
+  transform: translateY(-1px);
+  transition: opacity 140ms ease, background 140ms ease, color 140ms ease, border-color 140ms ease;
+}
+
+.project-panel:hover .project-add-button,
+.project-add-button:focus-visible {
+  opacity: 1;
+}
+
+.project-add-button:hover {
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.project-picker-button {
+  display: none;
+}
+
+.workspace-session strong {
+  display: none;
+}
+
+.workspace-actions .inspector-toggle-button {
+  display: none;
+}
+
+.composer-toolbar > button {
+  width: 38px;
+  height: 38px;
+  min-height: 38px;
+  font-size: 17px;
+}
+
+.context-panel {
+  grid-template-rows: 48px minmax(0, 1fr);
+}
+
+.inspector-shell-controls {
+  min-height: 48px;
+  padding: 8px 12px 0;
+}
+
+.inspector-shell-controls .inspector-toggle-button {
+  width: 34px;
+  min-height: 34px;
+  height: 34px;
+  box-shadow: none;
+}
+
+.config-backdrop {
+  background: rgba(246, 246, 247, 0.72);
+  backdrop-filter: blur(18px);
+}
+
+.config-sheet {
+  width: min(1080px, calc(100vw - 56px));
+  max-height: min(780px, calc(100vh - 56px));
+  gap: 0;
+  border: 1px solid rgba(216, 216, 222, 0.92);
+  border-radius: 24px;
+  background: var(--surface);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+}
+
+.config-sheet > header {
+  min-height: 72px;
+  padding: 0 22px 0 26px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.92);
+}
+
+.config-sheet > header h2 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 18px;
+  font-weight: 760;
+}
+
+.config-header-actions {
+  gap: 10px;
+}
+
+.config-header-actions > button:not(.icon-button),
+.provider-list-panel > button,
+.workflow-list-actions button,
+.settings-actions button,
+.provider-panel > button,
+.config-action-row button,
+.flow-toolbar button,
+.step-actions button {
+  min-height: 38px;
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  background: var(--surface-soft);
+  color: var(--text-primary);
+  padding: 0 14px;
+  font-weight: 650;
+}
+
+.config-header-actions > button:not(.icon-button) {
+  border-color: transparent;
+  background: var(--accent);
+  color: #ffffff;
+}
+
+.config-header-actions > button:not(.icon-button):hover {
+  background: #4f46e5;
+}
+
+.config-sheet header .icon-button {
+  width: 36px;
+  height: 36px;
+  min-height: 36px;
+  border-radius: 999px;
+  background: var(--surface-muted);
+  color: var(--text-secondary);
+}
+
+.config-sheet header .icon-button:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.config-content {
+  background: var(--surface);
+}
+
+.provider-manager,
+.workflow-manager {
+  grid-template-columns: 260px minmax(0, 1fr);
+  gap: 0;
+  min-height: 0;
+}
+
+.provider-list-panel,
+.workflow-list-panel {
+  border-right: 1px solid var(--border);
+  background: #fbfbfc;
+  padding: 16px;
+  gap: 12px;
+}
+
+.provider-list,
+.workflow-list {
+  gap: 6px;
+}
+
+.provider-list button,
+.workflow-list button {
+  min-height: 48px;
+  border-radius: 15px;
+  padding: 8px 12px;
+  color: var(--text-primary);
+}
+
+.workflow-list button {
+  border: 0;
+  background: transparent;
+}
+
+.provider-list button:hover,
+.provider-list button.active,
+.workflow-list button:hover,
+.workflow-list button.active {
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px var(--accent-border);
+}
+
+.provider-list button span,
+.workflow-list button span {
+  color: var(--text-primary);
+  font-size: 14px;
+}
+
+.provider-list button em,
+.workflow-list button em {
+  color: var(--text-muted);
+}
+
+.provider-manager .provider-panel,
+.flow-list,
+.settings-panel {
+  padding: 20px 24px;
+  background: var(--surface);
+}
+
+.provider-panel label,
+.workflow-meta label,
+.workflow-step label {
+  gap: 7px;
+}
+
+.provider-panel label span,
+.workflow-meta label span,
+.workflow-step label span,
+.settings-group h3 {
+  color: var(--text-primary);
+}
+
+.provider-panel input,
+.provider-panel select,
+.workflow-meta input,
+.workflow-meta textarea,
+.workflow-step textarea,
+.workflow-step select,
+.approval-note textarea,
+.inline-grid select {
+  min-height: 40px;
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  background: var(--surface-soft);
+  color: var(--text-primary);
+  padding: 9px 12px;
+}
+
+.provider-panel textarea,
+.workflow-meta textarea,
+.workflow-step textarea {
+  line-height: 1.5;
+}
+
+.provider-panel input:focus,
+.provider-panel select:focus,
+.workflow-meta input:focus,
+.workflow-meta textarea:focus,
+.workflow-step textarea:focus,
+.workflow-step select:focus,
+.inline-grid select:focus {
+  border-color: var(--accent-border);
+  background: #ffffff;
+  box-shadow: 0 0 0 3px rgba(91, 92, 246, 0.1);
+}
+
+.test-result,
+.settings-group,
+.workflow-meta,
+.workflow-step {
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: var(--surface-soft);
+  padding: 16px;
+}
+
+.workflow-step {
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-panel {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-content: start;
+}
+
+.settings-group {
+  border-bottom: 0;
+}
+
+.setting-row {
+  grid-template-columns: 112px minmax(0, 1fr);
+  gap: 12px;
+}
+
+.setting-row span {
+  color: var(--text-secondary);
+}
+
+.setting-row em,
+.test-result span,
+.test-result p {
+  color: var(--text-secondary);
+}
+
+.danger-button,
+.config-action-row .danger-button {
+  color: var(--danger);
+}
+
+.config-action-row .danger-button {
+  background: #fff1f1;
+  border-color: #ffd4d4;
+}
+
+@media (max-width: 980px) {
+  .settings-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .provider-manager,
+  .workflow-manager {
+    grid-template-columns: 1fr;
+  }
+
+  .provider-list-panel,
+  .workflow-list-panel {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+}
+
+/* Final light-detail polish */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #cfd1dc transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  min-height: 44px;
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: #cfd1dc;
+  background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: #b7bac8;
+  background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+body,
+#root,
+.app-shell {
+  border-top-color: #ffffff;
+}
+
+.app-shell {
+  border-top: 1px solid #ffffff;
+}
+
+button,
+.sidebar-nav button span,
+.project-caret,
+.tree-row span,
+.workspace-actions button,
+.inspector-toggle-button,
+.config-sheet header .icon-button {
+  color: var(--text-secondary);
+}
+
+.sidebar-nav button:hover span,
+.tree-row:hover span,
+.project-row:hover .project-caret,
+.workspace-actions button:hover,
+.inspector-toggle-button:hover,
+.config-sheet header .icon-button:hover {
+  color: var(--accent);
+}
+
+.sidebar-section-title {
+  min-height: 34px;
+  margin: 0 -8px 6px;
+  padding: 0 8px;
+  border-radius: 12px;
+  cursor: default;
+}
+
+.sidebar-section-title:hover {
+  background: rgba(91, 92, 246, 0.06);
+}
+
+.sidebar-section-title:hover .project-add-button,
+.project-panel:hover .project-add-button,
+.project-add-button:focus-visible {
+  opacity: 1;
+}
+
+.project-add-button {
+  width: 30px;
+  height: 30px;
+  min-height: 30px;
+  margin-right: -2px;
+}
+
+.config-sheet > header {
+  min-height: 64px;
+  padding: 0 12px 0 16px;
+}
+
+.config-sheet > header h2 {
+  transform: translateX(-2px);
+}
+
+.config-header-actions {
+  transform: translateX(2px);
+}
+
+.file-context-menu {
+  width: 176px;
+  gap: 4px;
+  border: 1px solid rgba(216, 216, 222, 0.94);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: var(--shadow-lg);
+  padding: 6px;
+  backdrop-filter: blur(18px);
+}
+
+.file-context-menu button {
+  min-height: 34px;
+  border-radius: 11px;
+  background: transparent;
+  color: var(--text-primary);
+  padding: 0 10px;
+  font-weight: 560;
+}
+
+.file-context-menu button:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.file-context-menu button:disabled {
+  color: var(--text-muted);
+  opacity: 0.45;
+}
+
+.template-menu {
+  border: 1px solid rgba(216, 216, 222, 0.94);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: var(--shadow-lg);
+  padding: 6px;
+  backdrop-filter: blur(18px);
+}
+
+.template-menu button {
+  border-radius: 11px;
+  color: var(--text-primary);
+}
+
+.template-menu button:hover,
+.template-menu button[aria-selected="true"] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* Floating workflow progress and quieter inspector output */
+.workspace {
+  position: relative;
+}
+
+.workflow-progress-float {
+  position: fixed;
+  right: calc(var(--inspector-width) + 22px);
+  bottom: 140px;
+  z-index: 18;
+  width: 360px;
+  max-height: min(52vh, 520px);
+  display: grid;
+  gap: 12px;
+  border: 1px solid rgba(216, 216, 222, 0.92);
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 24px 70px rgba(15, 15, 20, 0.14);
+  padding: 16px;
+  backdrop-filter: blur(18px);
+  overflow: auto;
+  pointer-events: auto;
+}
+
+.app-shell.inspector-collapsed .workflow-progress-float {
+  right: 72px;
+}
+
+.workflow-progress-float header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.workflow-progress-float header div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.workflow-progress-float header strong,
+.output-focus-card header strong {
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 760;
+}
+
+.workflow-progress-float header span {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow-progress-float header em {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 720;
+  padding: 4px 9px;
+}
+
+.workflow-progress-list {
+  display: grid;
+  gap: 8px;
+}
+
+.workflow-progress-step {
+  min-width: 0;
+  min-height: 38px;
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+}
+
+.workflow-progress-icon {
+  width: 22px;
+  height: 22px;
+  min-width: 22px;
+  min-height: 22px;
+  max-width: 22px;
+  max-height: 22px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #d7d9e4;
+  border-radius: 999px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.workflow-progress-step.running .workflow-progress-icon,
+.workflow-progress-step.pending .workflow-progress-icon {
+  border-color: #c8c9ff;
+  border-top-color: var(--accent);
+  color: transparent;
+  animation: workflowSpin 0.95s linear infinite;
+}
+
+.workflow-progress-step.done .workflow-progress-icon {
+  border-color: #b8edca;
+  background: #edfdf3;
+  color: #168a43;
+  animation: none;
+}
+
+.workflow-progress-step.failed .workflow-progress-icon {
+  border-color: #ffd4d4;
+  background: #fff1f1;
+  color: var(--danger);
+  animation: none;
+}
+
+.workflow-progress-step div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+  overflow: hidden;
+}
+
+.workflow-progress-step strong {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 680;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow-progress-step small {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@keyframes workflowSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.activity-stream {
+  display: none;
+}
+
+.detail-output {
+  gap: 12px;
+}
+
+.detail-output h2 {
+  color: var(--text-primary);
+  background: transparent;
+  padding: 0;
+}
+
+.run-summary {
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  padding: 0 0 12px;
+}
+
+.run-summary span {
+  border-color: var(--border);
+  background: var(--surface-soft);
+  color: var(--text-secondary);
+}
+
+.output-focus-card,
+.metric-details,
+.log-details {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: var(--surface-soft);
+  padding: 12px;
+}
+
+.output-focus-card header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.output-focus-card header span {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  font-size: 12px;
+  padding: 3px 8px;
+}
+
+.output-focus-card p {
+  max-height: 118px;
+  overflow: hidden;
+  color: var(--text-secondary);
+}
+
+.metric-details,
+.log-details {
+  gap: 10px;
+}
+
+.metric-details summary,
+.log-details summary {
+  cursor: pointer;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 720;
+  list-style: none;
+}
+
+.metric-details summary::-webkit-details-marker,
+.log-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.metric-details summary::after,
+.log-details summary::after {
+  content: "展开";
+  float: right;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 560;
+}
+
+.metric-details[open] summary::after,
+.log-details[open] summary::after {
+  content: "收起";
+}
+
+.metric-row {
+  border-color: var(--border);
+  background: var(--surface);
+  box-shadow: none;
+}
+
+.metric-row + .metric-row {
+  margin-top: 8px;
+}
+
+.metric-row strong,
+.metric-row span,
+.metric-row em {
+  color: var(--text-primary);
+}
+
+.metric-row.failed em,
+.metric-row.failed p {
+  color: var(--danger);
+}
+
+.log-details p {
+  margin: 0;
+  font-size: 12px;
+}
+
+@media (max-width: 860px) {
+  .workflow-progress-float {
+    bottom: 164px;
+    right: 16px;
+    width: calc(100% - 32px);
+  }
+}
+
+@media (max-width: 1320px) {
+  .workflow-progress-float {
+    right: 72px;
+  }
+}
+
+.stats span {
+  background: var(--surface-soft);
+  border-color: var(--border);
+  color: var(--text-secondary);
   font-family: "SF Mono", "Cascadia Code", Consolas, monospace;
+}
+
+.terminal-log p.system-line,
+.terminal-log p.error-line,
+.thinking-line {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.terminal-log p.system-line > span:first-child:not(.line-text),
+.terminal-log p.error-line > span:first-child:not(.line-text),
+.thinking-line > span:first-child:not(.thinking-content) {
+  display: none;
+}
+
+.terminal-log p.system-line .line-text,
+.terminal-log p.error-line .line-text {
+  display: inline-block;
+  max-width: min(760px, 100%);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--text-primary);
+  padding: 10px 12px;
+  box-shadow: var(--shadow-sm, 0 1px 2px rgba(0, 0, 0, 0.04));
+}
+
+.terminal-log p.error-line .line-text {
+  border-color: #ffd4d4;
+  background: #fff7f7;
+  color: var(--danger);
+}
+
+.thinking-line {
+  justify-items: start;
+}
+
+.thinking-content {
+  border: 1px solid var(--accent-border);
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  padding: 8px 12px;
+}
+
+/* Light consistency audit: keep overlays, approvals, output and floating progress out of the old dark theme. */
+:root,
+body,
+button,
+input,
+select,
+textarea {
+  color-scheme: light;
+}
+
+.app-shell.inspector-collapsed {
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr) 56px;
+}
+
+.workspace-actions button {
+  background: rgba(255, 255, 255, 0.88);
+  color: var(--text-primary);
+}
+
+.user-message-bubble,
+.terminal-log p.user-line .line-text {
+  border-color: #d8ddff;
+  background: #f3f4ff;
+  color: #343469 !important;
+}
+
+.workflow-progress-float {
+  right: 72px;
+  top: 18px;
+  bottom: auto;
+  z-index: 16;
+  width: min(360px, calc(100vw - var(--sidebar-width) - 104px));
+  max-width: calc(100vw - 96px);
+  max-height: min(58vh, 520px);
+  background: rgba(255, 255, 255, 0.96);
+  color: var(--text-primary);
+}
+
+.app-shell:not(.inspector-collapsed) .workflow-progress-float {
+  display: none;
+}
+
+.workflow-progress-step {
+  grid-template-columns: 28px minmax(0, 1fr);
+}
+
+.workflow-progress-icon {
+  flex: 0 0 22px;
+  inline-size: 22px;
+  block-size: 22px;
+  overflow: hidden;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.approval-modal-backdrop,
+.config-backdrop {
+  background: rgba(246, 246, 247, 0.74);
+  backdrop-filter: blur(18px);
+}
+
+.approval-modal,
+.config-sheet,
+.file-context-menu,
+.template-menu {
+  border: 1px solid rgba(216, 216, 222, 0.94);
+  background: rgba(255, 255, 255, 0.97);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-lg);
+}
+
+.approval-modal header,
+.approval-modal footer,
+.config-sheet > header {
+  border-color: var(--border);
+  background: rgba(255, 255, 255, 0.94);
+}
+
+.approval-modal strong,
+.approval-modal span,
+.approval-modal em,
+.approval-modal pre,
+.approval-note span,
+.orion-permission-request strong,
+.orion-permission-request span,
+.orion-permission-request p,
+.memory-candidate-request strong,
+.memory-candidate-request span,
+.memory-candidate-request p,
+.memory-candidate-request label span,
+.attachment-chip span,
+.attachment-chip em {
+  color: var(--text-primary);
+}
+
+.approval-modal em,
+.approval-modal span,
+.approval-note span,
+.orion-permission-request p,
+.memory-candidate-request p,
+.attachment-chip em {
+  color: var(--text-secondary);
+}
+
+.approval-modal pre {
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: #fbfbfc;
+  color: var(--text-primary);
+}
+
+.approval-modal footer button,
+.orion-permission-options button,
+.memory-candidate-options button,
+.attachment-chip,
+.attachment-chip button,
+.file-context-menu button,
+.template-menu button {
+  border-color: var(--border);
+  background: var(--surface-soft);
+  color: var(--text-primary);
+}
+
+.approval-modal footer button:hover,
+.orion-permission-options button:hover,
+.memory-candidate-options button:hover,
+.attachment-chip button:hover,
+.file-context-menu button:hover,
+.template-menu button:hover,
+.template-menu button[aria-selected="true"] {
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.approval-modal footer .danger-button,
+.orion-permission-options .danger-button,
+.memory-candidate-options .danger-button {
+  border-color: #ffd4d4;
+  background: #fff1f1;
+  color: var(--danger);
+}
+
+.approval-note textarea,
+.memory-candidate-request input,
+.memory-candidate-request textarea,
+.composer textarea,
+.provider-panel input,
+.provider-panel select,
+.provider-panel textarea,
+.workflow-meta input,
+.workflow-meta textarea,
+.workflow-step textarea,
+.workflow-step select,
+.inline-grid select {
+  background: #fbfbfc;
+  color: var(--text-primary);
+}
+
+.orion-permission-request,
+.memory-candidate-request {
+  border-color: #f4d391;
+  background: #fffaf0;
+  color: var(--text-primary);
+}
+
+.detail-output,
+.detail-output h2,
+.detail-output p,
+.output-focus-card,
+.metric-details,
+.log-details,
+.metric-row,
+.approval-hint,
+.orion-suggestions,
+.orion-suggestion,
+.run-summary span,
+.stats span {
+  background-color: var(--surface-soft);
+  color: var(--text-primary);
+}
+
+.detail-output {
+  background: var(--surface);
+}
+
+.output-focus-card,
+.metric-details,
+.log-details,
+.metric-row,
+.approval-hint,
+.orion-suggestions {
+  border-color: var(--border);
+}
+
+.output-focus-card p,
+.metric-row p,
+.log-details p,
+.approval-hint p,
+.approval-hint span,
+.orion-suggestion p,
+.orion-suggestion span,
+.orion-suggestion small {
+  color: var(--text-secondary);
+}
+
+.metric-row header,
+.metric-row strong,
+.metric-row span,
+.metric-row em,
+.log-details summary,
+.metric-details summary {
+  color: var(--text-primary);
+}
+
+.context-panel,
+.app-shell.inspector-collapsed .context-panel {
+  background: var(--app-bg);
+}
+
+.app-shell.inspector-collapsed .inspector-shell-controls {
+  padding-right: 10px;
+}
+
+@media (max-width: 860px) {
+  .workflow-progress-float {
+    top: 14px;
+    right: 16px;
+    width: calc(100% - 32px);
+  }
+}
+
+/* Project file tree redesign */
+.file-list.inspector-card {
+  padding: 22px 24px 24px;
+  border-radius: 26px;
+  background: rgba(255, 255, 255, 0.92);
+}
+
+.file-list h2 {
+  font-size: 18px;
+  font-weight: 780;
+}
+
+.file-list > p {
+  margin-top: 2px;
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.file-tree {
+  margin-top: 8px;
+  padding: 4px 0 12px;
+  display: grid;
+  gap: 1px;
+  overflow: auto;
+  font-family: "SF Mono", "Cascadia Code", Consolas, "Microsoft YaHei UI", monospace;
+}
+
+.tree-group {
+  display: grid;
+  gap: 1px;
+}
+
+.tree-row {
+  --tree-indent: 12px;
+  width: 100%;
+  min-height: 40px;
+  display: grid;
+  grid-template-columns: 14px 22px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--text-primary);
+  padding: 0 12px 0 var(--tree-indent);
+  box-shadow: none;
+  text-align: left;
+  transition: background 140ms ease, border-color 140ms ease, color 140ms ease, box-shadow 140ms ease;
+}
+
+.tree-row:hover,
+.tree-row.selected {
+  border-color: #ebe9ff;
+  background: #f0efff;
+  color: var(--text-primary);
+  box-shadow: none;
+}
+
+.tree-caret {
+  display: grid;
+  place-items: center;
+  color: #777780;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.tree-caret.placeholder {
+  visibility: hidden;
+}
+
+.tree-icon {
+  position: relative;
+  width: 19px;
+  height: 19px;
+  display: inline-block;
+  color: #1f1f23;
+}
+
+.folder-icon::before {
+  content: "";
+  position: absolute;
+  left: 1px;
+  top: 5px;
+  width: 16px;
+  height: 11px;
+  border: 1.8px solid currentColor;
+  border-radius: 3px;
+  background: transparent;
+}
+
+.folder-icon::after {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 2px;
+  width: 8px;
+  height: 5px;
+  border: 1.8px solid currentColor;
+  border-bottom: 0;
+  border-radius: 3px 3px 0 0;
+  background: transparent;
+}
+
+.file-icon::before {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 2px;
+  width: 11px;
+  height: 15px;
+  border: 1.8px solid currentColor;
+  border-radius: 3px;
+  background: transparent;
+}
+
+.file-icon::after {
+  content: "";
+  position: absolute;
+  right: 3px;
+  top: 3px;
+  width: 5px;
+  height: 5px;
+  border-top: 1.8px solid currentColor;
+  border-right: 1.8px solid currentColor;
+  border-radius: 0 2px 0 0;
+  transform: skew(-8deg);
+}
+
+.tree-row strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 520;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tree-row.directory strong {
+  font-weight: 560;
+}
+
+.tree-row em {
+  color: #777780;
+  font-size: 12px;
+  font-style: normal;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.tree-row.directory em {
+  display: none;
+}
+
+.tree-row.selected .tree-icon,
+.tree-row.selected .tree-caret,
+.tree-row:hover .tree-icon,
+.tree-row:hover .tree-caret {
+  color: var(--accent);
+}
+
+.project-row .project-caret {
+  width: 14px;
+  line-height: 1;
+}
+
+.project-row .project-folder-icon {
+  width: 19px;
+  height: 19px;
+  color: var(--accent);
+}
+
+.project-row:hover .project-folder-icon,
+.project-row:hover .project-caret {
+  color: var(--accent);
+}
+
+/* Memory candidate form polish */
+.memory-candidate-request {
+  gap: 12px;
+  border: 1px solid rgba(244, 211, 145, 0.74);
+  border-radius: 24px;
+  background: linear-gradient(180deg, #fffaf0 0%, #fffdf8 100%);
+  box-shadow: 0 18px 46px rgba(99, 76, 39, 0.08);
+  padding: 16px;
+}
+
+.memory-candidate-request header {
+  align-items: center;
+  color: var(--text-primary);
+}
+
+.memory-candidate-request header strong {
+  font-size: 15px;
+  font-weight: 760;
+}
+
+.memory-candidate-request header span {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.memory-candidate-request label {
+  gap: 7px;
+}
+
+.memory-candidate-request label span {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.memory-candidate-request input,
+.memory-candidate-request textarea {
+  min-height: 46px;
+  border: 1px solid #e2e4ee;
+  border-radius: 15px;
+  background: rgba(255, 255, 255, 0.88);
+  color: var(--text-primary);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.78), 0 1px 2px rgba(15, 15, 20, 0.035);
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei UI", sans-serif;
+  font-size: 14px;
+  line-height: 1.55;
+  padding: 11px 13px;
+  transition: border-color 150ms ease, background 150ms ease, box-shadow 150ms ease;
+}
+
+.memory-candidate-request textarea {
+  min-height: 96px;
+  max-height: 180px;
+  resize: vertical;
+}
+
+.memory-candidate-request input:hover,
+.memory-candidate-request textarea:hover {
+  border-color: #d6d8e6;
+  background: #ffffff;
+}
+
+.memory-candidate-request input:focus,
+.memory-candidate-request textarea:focus {
+  border-color: var(--accent-border);
+  background: #ffffff;
+  box-shadow: 0 0 0 4px rgba(91, 92, 246, 0.11), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+
+.memory-candidate-request textarea::-webkit-scrollbar {
+  width: 10px;
+}
+
+.memory-candidate-request textarea::-webkit-scrollbar-thumb {
+  border: 3px solid #ffffff;
+  background: #d4d6e2;
+}
+
+.memory-candidate-options {
+  align-items: center;
+  gap: 10px;
+  padding-top: 2px;
+}
+
+.memory-candidate-options button {
+  min-height: 42px;
+  border-radius: 16px;
+  padding: 0 16px;
+  font-weight: 720;
+}
+
+.memory-candidate-options button:first-child {
+  border-color: transparent;
+  background: var(--accent);
+  color: #ffffff;
+  box-shadow: 0 12px 28px rgba(91, 92, 246, 0.24);
+}
+
+.memory-candidate-options button:first-child:hover {
+  background: #4f46e5;
+  color: #ffffff;
+  box-shadow: 0 14px 32px rgba(91, 92, 246, 0.28);
+}
+
+.memory-candidate-options .danger-button {
+  border-color: #ffd4d4;
+  background: #fff7f7;
+  color: var(--danger);
+  box-shadow: none;
+}
+
+.memory-candidate-options .danger-button:hover {
+  border-color: #ffc2c2;
+  background: #fff1f1;
+  color: var(--danger);
+}
+
+/* Final folder/file icon pass: use clean stroke SVGs like the reference image. */
+.tree-icon {
+  position: static;
+  width: 19px;
+  height: 19px;
+  display: block;
+  flex: 0 0 19px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  color: #1f1f23;
+}
+
+.folder-icon::before,
+.folder-icon::after,
+.file-icon::before,
+.file-icon::after {
+  content: none !important;
+  display: none !important;
+}
+
+.tree-row .tree-icon {
+  color: #1f1f23;
+}
+
+.tree-row.selected .tree-icon,
+.tree-row:hover .tree-icon {
+  color: var(--accent);
+}
+
+.project-row .folder-icon {
+  width: 19px;
+  height: 19px;
+  color: #1f1f23;
+}
+
+.project-row:hover .folder-icon {
+  color: var(--accent);
+}
+
+/* The add-project affordance belongs to the section-title row, not the whole project panel. */
+.project-panel:hover .project-add-button {
+  opacity: 0;
+}
+
+.sidebar-section-title:hover .project-add-button,
+.project-add-button:hover,
+.project-add-button:focus-visible {
+  opacity: 1;
+}
+
+/* Hard lock labels and add-button hover after older sidebar/tree rules. */
+.tree-row .tree-label,
+.tree-row strong.tree-label {
+  min-width: 0;
+  display: block;
+  visibility: visible;
+  opacity: 1;
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 520;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tree-row.directory .tree-label {
+  font-weight: 560;
+}
+
+.project-row .project-name {
+  min-width: 0;
+  display: block;
+  visibility: visible;
+  opacity: 1;
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 560;
+  line-height: 42px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-row:hover .project-name {
+  color: var(--text-primary);
+}
+
+.sidebar-section-title {
+  width: 100%;
+}
+
+.sidebar-section-title .project-add-button {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.sidebar-section-title:hover .project-add-button,
+.sidebar-section-title:focus-within .project-add-button {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.project-add-button:hover,
+.project-add-button:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* Layout repair: force tree rows onto one line with explicit grid slots. */
+.file-tree .tree-row {
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  display: grid !important;
+  grid-template-columns: 14px 22px minmax(0, 1fr) auto !important;
+  grid-auto-flow: column;
+  align-items: center;
+  column-gap: 7px;
+  row-gap: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.file-tree .tree-caret {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.file-tree .tree-icon {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.file-tree .tree-label {
+  grid-column: 3;
+  grid-row: 1;
+  align-self: center;
+}
+
+.file-tree .tree-row em {
+  grid-column: 4;
+  grid-row: 1;
+  align-self: center;
+}
+
+.project-row {
+  display: grid !important;
+  grid-template-columns: 14px 22px minmax(0, 1fr) auto !important;
+  align-items: center;
+  column-gap: 7px;
+  overflow: hidden;
+}
+
+.project-row .project-caret {
+  grid-column: 1;
+}
+
+.project-row .folder-icon {
+  grid-column: 2;
+}
+
+.project-row .project-name {
+  grid-column: 3;
+}
+
+.project-row em {
+  grid-column: 4;
+}
+
+.sidebar-section-title {
+  display: flex !important;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 34px;
+}
+
+.sidebar-section-title .project-add-button {
+  display: grid !important;
+  place-items: center;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: transparent;
+  transform: translateY(-1px) scale(0.94);
+  transition: opacity 140ms ease, transform 140ms ease, background 140ms ease, border-color 140ms ease;
+}
+
+.sidebar-section-title:hover .project-add-button,
+.sidebar-section-title:focus-within .project-add-button {
+  opacity: 1 !important;
+  pointer-events: auto;
+  transform: translateY(-1px) scale(1);
+}
+
+/* Right sidebar toggle interaction */
+.inspector-shell-controls .inspector-toggle-button:hover,
+.inspector-shell-controls .inspector-toggle-button:focus-visible {
+  border-color: transparent;
+  background: var(--accent);
+  color: #ffffff;
+  box-shadow: 0 12px 28px rgba(91, 92, 246, 0.24);
+}
+
+/* Chat status bubble repair: never collapse status text into vertical letters. */
+.terminal-log .thinking-line {
+  width: 100%;
+  min-width: 0;
+  display: flex !important;
+  justify-content: flex-start;
+  align-items: center;
+  margin: 8px 0 14px;
+  word-break: normal;
+  overflow-wrap: normal;
+}
+
+.terminal-log .thinking-content {
+  width: auto;
+  min-width: 0;
+  max-width: min(760px, 100%);
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  white-space: nowrap;
+  word-break: normal;
+  overflow-wrap: normal;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.terminal-log p.system-line .line-text,
+.terminal-log p.error-line .line-text {
+  min-width: min(360px, 100%);
+  white-space: normal;
+  word-break: normal;
+  overflow-wrap: anywhere;
+}
+
+/* Composer stop button should stay in the light theme and center the stop mark. */
+.composer-toolbar > button.stop-workflow-button,
+.composer-toolbar > button.stop-workflow-button:hover,
+.composer-toolbar > button.stop-workflow-button:focus-visible {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  min-height: 44px;
+  border: 1px solid #ffd4d4;
+  border-radius: 999px;
+  background: #fff1f1;
+  color: var(--danger);
+  box-shadow: 0 12px 28px rgba(239, 68, 68, 0.14);
+  font-size: 0;
+  line-height: 1;
+  padding: 0;
+  text-align: center;
+}
+
+.composer-toolbar > button.stop-workflow-button::before {
+  content: "";
+  width: 10px;
+  height: 10px;
+  display: block;
+  border-radius: 2px;
+  background: currentColor;
+}
+
+.composer-toolbar > button.stop-workflow-button:hover,
+.composer-toolbar > button.stop-workflow-button:focus-visible {
+  background: var(--danger);
+  color: #ffffff;
+  border-color: transparent;
+  box-shadow: 0 14px 32px rgba(239, 68, 68, 0.22);
+}
+
+/* Compact single-line collapsed rows in the output inspector. */
+.detail-output .metric-details,
+.detail-output .log-details {
+  padding: 0;
+  gap: 0;
+  overflow: hidden;
+}
+
+.detail-output .metric-details:not([open]),
+.detail-output .log-details:not([open]) {
+  min-height: 48px;
+}
+
+.detail-output .metric-details[open],
+.detail-output .log-details[open] {
+  padding: 12px;
+  gap: 10px;
+}
+
+.detail-output .metric-details summary,
+.detail-output .log-details summary {
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 16px;
+  line-height: 1;
+}
+
+.detail-output .metric-details[open] summary,
+.detail-output .log-details[open] summary {
+  min-height: 32px;
+  padding: 0;
+}
+
+.detail-output .metric-details summary::after,
+.detail-output .log-details summary::after {
+  float: none;
+  flex: 0 0 auto;
+  margin-left: auto;
+  line-height: 1;
+}
+
+/* Composer primary button size aligned with Codex composer affordance. */
+.composer-toolbar > button,
+.composer-toolbar > button.stop-workflow-button,
+.composer-toolbar > button.stop-workflow-button:hover,
+.composer-toolbar > button.stop-workflow-button:focus-visible {
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+  min-height: 36px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  line-height: 1;
+}
+
+.composer-toolbar > button {
+  font-size: 20px;
+}
+
+.composer-toolbar > button.stop-workflow-button::before {
+  width: 8px;
+  height: 8px;
+  border-radius: 1.5px;
+}
+
+/* Output inspector details repair: open panels must not clip following content. */
+.inspector-content {
+  overflow: hidden;
+}
+
+.detail-output.inspector-card {
+  min-height: 0;
+  max-height: none;
+  overflow-y: auto;
+  overflow-x: hidden;
+  align-content: start;
+  padding-bottom: 20px;
+}
+
+.detail-output .metric-details,
+.detail-output .log-details {
+  overflow: visible;
+  align-content: start;
+}
+
+.detail-output .metric-details:not([open]),
+.detail-output .log-details:not([open]) {
+  overflow: hidden;
+  min-height: 44px;
+  max-height: 44px;
+  padding: 0;
+}
+
+.detail-output .metric-details[open],
+.detail-output .log-details[open] {
+  overflow: visible;
+  max-height: none;
+  padding: 12px;
+}
+
+.detail-output .metric-details:not([open]) summary,
+.detail-output .log-details:not([open]) summary {
+  min-height: 44px;
+  padding: 0 14px;
+}
+
+.detail-output .metric-details summary,
+.detail-output .log-details summary {
+  width: 100%;
+}
+
+/* Output suggestion text hierarchy: keep headings readable. */
+.detail-output .orion-suggestions > header strong,
+.detail-output .orion-suggestion > div strong {
+  color: var(--text-primary) !important;
+  font-size: 14px;
+  font-weight: 760;
+}
+
+.detail-output .orion-suggestions > header span {
+  color: var(--text-secondary) !important;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.detail-output .orion-suggestion > div em {
+  color: var(--text-secondary) !important;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 650;
+}
+
+.detail-output .orion-suggestion p,
+.detail-output .orion-suggestion span,
+.detail-output .orion-suggestion small {
+  color: #5f6472 !important;
+}
+
+/* Current workflow summary should not clip its text. */
+.detail-output .output-focus-card p {
+  max-height: none;
+  overflow: visible;
+  line-height: 1.65;
+  word-break: normal;
+  overflow-wrap: anywhere;
+}
+
+/* Make ORION suggestions collapsible like the other output sections. */
+.detail-output .orion-suggestions {
+  padding: 0;
+  gap: 0;
+  overflow: visible;
+}
+
+.detail-output .orion-suggestions:not([open]) {
+  min-height: 44px;
+  max-height: 44px;
+  overflow: hidden;
+}
+
+.detail-output .orion-suggestions[open] {
+  padding: 12px;
+  gap: 10px;
+}
+
+.detail-output .orion-suggestions summary {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 14px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.detail-output .orion-suggestions[open] summary {
+  min-height: 28px;
+  padding: 0;
+}
+
+.detail-output .orion-suggestions summary::-webkit-details-marker {
+  display: none;
+}
+
+.detail-output .orion-suggestions summary::after {
+  content: "展开";
+  flex: 0 0 auto;
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.detail-output .orion-suggestions[open] summary::after {
+  content: "收起";
+}
+
+/* Chat column repair: the old floating-progress reservation must not squeeze conversations. */
+.workspace .terminal-log {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  margin-right: 0;
+  padding: 32px clamp(28px, 6vw, 88px) 20px;
+  padding-right: clamp(28px, 6vw, 88px);
+  justify-self: stretch;
+}
+
+.workspace .flow-column {
+  width: min(100%, 820px);
+  max-width: 820px;
+  margin: 0 auto;
+}
+
+.app-shell:not(.inspector-collapsed) .workspace .flow-column {
+  width: min(100%, 820px);
+  max-width: 820px;
+}
+
+.app-shell:not(.inspector-collapsed) .workflow-progress-float {
+  display: none !important;
+}
+
+.app-shell.inspector-collapsed .workspace .terminal-log {
+  padding-right: calc(360px + 96px);
+}
+
+.app-shell.inspector-collapsed .workspace .flow-column {
+  width: min(100%, 820px);
+  max-width: 820px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+@media (max-width: 1180px) {
+  .app-shell.inspector-collapsed .workspace .terminal-log {
+    padding-right: clamp(28px, 6vw, 88px);
+  }
+}
+
+.detail-output .orion-suggestions summary strong {
+  color: var(--text-primary) !important;
+  opacity: 1 !important;
+}
+
+.detail-output .orion-suggestions summary span {
+  color: var(--text-secondary) !important;
+  opacity: 1 !important;
 }
 
 
