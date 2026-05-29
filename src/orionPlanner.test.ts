@@ -158,3 +158,60 @@ test("assistant response does not create install actions for unknown clients", (
   assert.deepEqual(response.actions, []);
   assert.match(response.message, /trusted installer/i);
 });
+
+test("assistant response inspects local artifact and task paths directly", () => {
+  const response = createOrionAssistantResponse("帮我看一下当前产物生成配置路径");
+
+  assert.equal(response.mode, "assistant");
+  assert.deepEqual(response.actions.map((action) => action.kind), ["local.inspectConfig"]);
+  assert.equal(response.actions[0].risk, "direct");
+  assert.deepEqual(response.actions[0].payload, {
+    request: "帮我看一下当前产物生成配置路径",
+    include: ["settings_path", "artifact_output_dir", "tasks_dir", "current_project"],
+  });
+});
+
+test("assistant response maps project text search to direct project search", () => {
+  const response = createOrionAssistantResponse("在项目里搜索 project_scanner");
+
+  assert.equal(response.mode, "assistant");
+  assert.deepEqual(response.actions.map((action) => action.kind), ["file.searchProject"]);
+  assert.equal(response.actions[0].risk, "direct");
+  assert.deepEqual(response.actions[0].payload, {
+    query: "project_scanner",
+    request: "在项目里搜索 project_scanner",
+    max_results: 30,
+  });
+});
+
+test("assistant response maps public and sensitive web searches to different risks", () => {
+  const publicResponse = createOrionAssistantResponse("上网查询 Tauri v2 opener 文档");
+  const sensitiveResponse = createOrionAssistantResponse("上网查一下 E:\\code\\ORX\\src-tauri 报错日志");
+
+  assert.deepEqual(publicResponse.actions.map((action) => action.kind), ["web.searchPublic"]);
+  assert.equal(publicResponse.actions[0].risk, "direct");
+  assert.deepEqual(publicResponse.actions[0].payload, {
+    query: "Tauri v2 opener 文档",
+    request: "上网查询 Tauri v2 opener 文档",
+    max_results: 5,
+  });
+
+  assert.deepEqual(sensitiveResponse.actions.map((action) => action.kind), ["web.searchSensitive"]);
+  assert.equal(sensitiveResponse.actions[0].risk, "confirm");
+});
+
+test("assistant response allows auto writes only for generated artifact requests", () => {
+  const generatedResponse = createOrionAssistantResponse("写到产物目录 orion-note.md 内容：hello");
+  const configResponse = createOrionAssistantResponse("自动写 settings.json 内容：hello");
+
+  assert.deepEqual(generatedResponse.actions.map((action) => action.kind), ["file.writeGeneratedArtifactAuto"]);
+  assert.equal(generatedResponse.actions[0].risk, "direct");
+  assert.deepEqual(generatedResponse.actions[0].payload, {
+    relative_path: "orion-note.md",
+    content: "hello",
+    request: "写到产物目录 orion-note.md 内容：hello",
+  });
+
+  assert.deepEqual(configResponse.actions.map((action) => action.kind), ["file.writeGeneratedArtifact"]);
+  assert.equal(configResponse.actions[0].risk, "confirm");
+});

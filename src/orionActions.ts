@@ -2,6 +2,7 @@ export type OrionRiskLevel = "direct" | "confirm" | "strong-confirm";
 
 export type OrionActionKind =
   | "project.inspect"
+  | "local.inspectConfig"
   | "workflow.recommend"
   | "workflow.draft"
   | "workflow.create"
@@ -14,9 +15,13 @@ export type OrionActionKind =
   | "skill.attach"
   | "skill.detach"
   | "memory.search"
+  | "web.searchPublic"
+  | "web.searchSensitive"
   | "memory.append"
   | "memory.update"
   | "file.readProjectFile"
+  | "file.searchProject"
+  | "file.writeGeneratedArtifactAuto"
   | "file.writeGeneratedArtifact"
   | "command.runWhitelisted"
   | "release.build"
@@ -35,6 +40,7 @@ export type OrionAction = {
 
 const riskByAction: Record<OrionActionKind, OrionRiskLevel> = {
   "project.inspect": "direct",
+  "local.inspectConfig": "direct",
   "workflow.recommend": "direct",
   "workflow.draft": "direct",
   "workflow.create": "direct",
@@ -44,7 +50,11 @@ const riskByAction: Record<OrionActionKind, OrionRiskLevel> = {
   "skill.list": "direct",
   "skill.attach": "direct",
   "memory.search": "direct",
+  "web.searchPublic": "direct",
   "file.readProjectFile": "direct",
+  "file.searchProject": "direct",
+  "file.writeGeneratedArtifactAuto": "direct",
+  "web.searchSensitive": "confirm",
   "skill.detach": "confirm",
   "memory.append": "confirm",
   "memory.update": "confirm",

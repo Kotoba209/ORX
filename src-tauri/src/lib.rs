@@ -14,7 +14,19 @@ use provider_config::{AgentBindingInput, AgentRunInput, AgentRunResult, Provider
 use serde::Serialize;
 use app_settings::AppSettings;
 use memory_rule_store::{MemoryRuleInput, MemoryRuleSnapshot};
-use orion_actions::{GeneratedArtifactWriteInput, GeneratedArtifactWriteResult, ProjectFileReadInput, ProjectFileReadResult, WhitelistedCommandInput, WhitelistedCommandResult};
+use orion_actions::{
+    GeneratedArtifactWriteInput,
+    GeneratedArtifactWriteResult,
+    LocalConfigInspectionResult,
+    ProjectFileReadInput,
+    ProjectFileReadResult,
+    ProjectSearchInput,
+    ProjectSearchResult,
+    WebSearchInput,
+    WebSearchResult,
+    WhitelistedCommandInput,
+    WhitelistedCommandResult,
+};
 use task_archive::{ApprovalRecordInput, TaskArchiveFinishInput, TaskArchiveRef, TaskArchiveStartInput, TaskArtifactInput, TaskAttachmentInput, TaskAttachmentSaveResult};
 use workflow_config_store::WorkflowConfigSnapshot;
 use workflow::WorkflowStep;
@@ -174,6 +186,26 @@ fn orion_read_project_file(input: ProjectFileReadInput) -> Result<ProjectFileRea
 }
 
 #[tauri::command]
+fn orion_inspect_local_config(current_project: String) -> Result<LocalConfigInspectionResult, String> {
+    let settings_path = app_settings::default_settings_path()?;
+    let settings = app_settings::load_settings(&settings_path)?;
+    let tasks_dir = task_archive::default_tasks_dir()?;
+    Ok(orion_actions::inspect_local_config(settings_path, settings.artifact_output_dir, tasks_dir, current_project))
+}
+
+#[tauri::command]
+fn orion_search_project(input: ProjectSearchInput) -> Result<ProjectSearchResult, String> {
+    orion_actions::search_project(input)
+}
+
+#[tauri::command]
+async fn orion_web_search(input: WebSearchInput) -> Result<WebSearchResult, String> {
+    tauri::async_runtime::spawn_blocking(move || orion_actions::web_search(input))
+        .await
+        .map_err(|error| format!("联网查询后台任务失败: {error}"))?
+}
+
+#[tauri::command]
 fn orion_write_generated_artifact(input: GeneratedArtifactWriteInput) -> Result<GeneratedArtifactWriteResult, String> {
     orion_actions::write_generated_artifact(input)
 }
@@ -222,7 +254,10 @@ pub fn run() {
             get_memory_rules,
             save_memory_rules,
             append_memory_rule,
+            orion_inspect_local_config,
             orion_read_project_file,
+            orion_search_project,
+            orion_web_search,
             orion_write_generated_artifact,
             orion_validate_whitelisted_command,
             orion_run_whitelisted_command,

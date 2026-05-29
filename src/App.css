@@ -4506,6 +4506,37 @@ textarea {
   font-size: 20px;
 }
 
+.composer-toolbar > button.assistant-loading-button,
+.composer-toolbar > button.assistant-loading-button:hover,
+.composer-toolbar > button.assistant-loading-button:focus-visible,
+.composer-toolbar > button.assistant-loading-button:disabled {
+  display: grid;
+  place-items: center;
+  border-color: transparent;
+  background: var(--accent);
+  color: #ffffff;
+  opacity: 1;
+  cursor: progress;
+  box-shadow: 0 14px 32px rgba(91, 92, 246, 0.24);
+}
+
+.composer-toolbar > button.assistant-loading-button::before {
+  content: "";
+  width: 15px;
+  height: 15px;
+  display: block;
+  border-radius: 999px;
+  border: 2px solid rgba(255, 255, 255, 0.42);
+  border-top-color: #ffffff;
+  animation: assistantButtonSpin 0.8s linear infinite;
+}
+
+@keyframes assistantButtonSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .composer-toolbar > button.stop-workflow-button::before {
   width: 8px;
   height: 8px;

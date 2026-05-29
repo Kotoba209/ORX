@@ -47,10 +47,12 @@ import {
 import { createPendingMemoryCandidate, updatePendingMemoryCandidate as applyMemoryCandidatePatch, type PendingMemoryCandidate } from "./memoryCandidates";
 import { applyOrionNodeInstruction, applyOrionPlanModification, parseOrionCommand, type OrionPlanModification } from "./orionCommands";
 import { classifyOrionIntent, createOrionActionPlan, createOrionAssistantResponse, draftOrionWorkflow } from "./orionPlanner";
+import { resolveOrionConversationRoute } from "./orionConversationRouter";
 import { groupOrionActionsByRisk, type OrionAction, type OrionRiskLevel } from "./orionActions";
 import { actionRiskSummary, formatOrionPayloadPreview, highestOrionRisk, orionRiskLabel } from "./orionPermission";
 import { monitorOrionNodeResult, type OrionSuggestedAction } from "./orionRunMonitor";
 import { formatWhitelistedCommandResult, shouldStopAfterCommandResult, type WhitelistedCommandResult } from "./orionCommandResults";
+import { assistantActivityLine, composerSendState } from "./orionAssistantActivity";
 
 type ProjectProfile = {
   detected_stack: string[];
@@ -72,6 +74,12 @@ type AgentBinding = { role: string; provider_id: string; model: string; temperat
 type ProviderSnapshot = { providers: ProviderConfig[]; agents: AgentBinding[] };
 type WorkflowConfigSnapshot = { workflows: WorkflowDefinition[]; active_workflow_id: string };
 type AppSettings = { artifact_output_dir: string };
+type LocalConfigInspectionResult = { settings_path: string; artifact_output_dir: string; tasks_dir: string; current_project: string };
+type ProjectSearchMatch = { path: string; line_number: number; line: string };
+type ProjectSearchResult = { query: string; project_root: string; matches: ProjectSearchMatch[] };
+type WebSearchHit = { title: string; url: string; snippet: string; content_preview: string };
+type WebSearchResult = { query: string; results: WebSearchHit[] };
+type GeneratedArtifactWriteResult = { path: string; bytes: number };
 type MemoryRuleSnapshot = { rules: MemoryRule[] };
 type PendingAttachment = { id: string; path?: string; name: string; kind: string; bytes: number; inlineBytes?: number[] };
 type TaskAttachmentRecord = { original_name: string; path: string; bytes: number; kind: string; text_preview?: string | null };
@@ -79,11 +87,12 @@ type TaskAttachmentSaveResult = { task_id: string; attachments: TaskAttachmentRe
 type InlineAttachmentInput = { original_name: string; bytes: number[] };
 type WorkflowMetric = { stage: string; owner: string; status: "running" | "done" | "failed"; elapsed_ms: number; input_tokens: number; output_tokens: number; total_tokens: number; output_preview: string };
 type TaskArchiveRef = { id: string; path: string };
-type WorkflowRuntime = { task: string; enabledSteps: WorkflowStep[]; nextIndex: number; upstream: string; archive: TaskArchiveRef | null; workflowStart: number; runTotals: { elapsed_ms: number; input_tokens: number; output_tokens: number; total_tokens: number }; artifactRetries?: Record<string, number> };
+type WorkflowRuntime = { task: string; enabledSteps: WorkflowStep[]; nextIndex: number; upstream: string; archive: TaskArchiveRef | null; workflowStart: number; runTotals: { elapsed_ms: number; input_tokens: number; output_tokens: number; total_tokens: number }; artifactRetries?: Record<string, number>; skipNodeApprovals?: boolean };
 type ApprovalGate = { step: WorkflowStep; stepIndex: number; result: AgentRunResult; runtime: WorkflowRuntime; preview: string; upstreamBefore: string };
 type ClarificationGate = { step: WorkflowStep; stepIndex: number; result: AgentRunResult; runtime: WorkflowRuntime; prompt: string };
 type OrionPendingPlan = { task: string; workflow: WorkflowDefinition; actions: OrionAction[] };
 type OrionPendingAssistant = { task: string; message: string; actions: OrionAction[] };
+type WorkflowRunOptions = { skipNodeApprovals?: boolean; initiatedBy?: "direct" | "orion-existing-workflow" | "orion-custom-workflow"; routeReason?: string };
 type InspectorView = "output" | "context" | "files";
 type ConfigPanel = "provider" | "workflow" | "settings" | null;
 type ContextMenuState =
@@ -170,6 +179,31 @@ function formatDuration(ms: number) {
   return `${minutes}m ${rest}s`;
 }
 
+function formatProjectSearchResult(result: ProjectSearchResult) {
+  if (result.matches.length === 0) {
+    return `项目搜索「${result.query}」没有命中。`;
+  }
+  const preview = result.matches
+    .slice(0, 8)
+    .map((match) => `${match.path}:${match.line_number} ${match.line.trim()}`)
+    .join("；");
+  return `项目搜索「${result.query}」命中 ${result.matches.length} 处：${preview}`;
+}
+
+function formatWebSearchResult(result: WebSearchResult) {
+  if (result.results.length === 0) {
+    return `联网查询「${result.query}」没有拿到可读结果。`;
+  }
+  const preview = result.results
+    .slice(0, 5)
+    .map((hit, index) => {
+      const summary = hit.content_preview || hit.snippet || "没有可读摘要";
+      return `${index + 1}. ${hit.title} - ${hit.url} - ${summary}`;
+    })
+    .join("；");
+  return `联网查询「${result.query}」读取到 ${result.results.length} 条结果：${preview}`;
+}
+
 function previewOutput(output: string) {
   const compact = output.replace(/\s+/g, " ").trim();
   return compact.length > 260 ? `${compact.slice(0, 260)}...` : compact;
@@ -223,6 +257,7 @@ function App() {
   const [clarificationGate, setClarificationGate] = useState<ClarificationGate | null>(null);
   const [orionPendingPlan, setOrionPendingPlan] = useState<OrionPendingPlan | null>(null);
   const [orionPendingAssistant, setOrionPendingAssistant] = useState<OrionPendingAssistant | null>(null);
+  const [orionAssistantActionCount, setOrionAssistantActionCount] = useState(0);
   const [orionSuggestions, setOrionSuggestions] = useState<OrionSuggestedAction[]>([]);
   const [currentActivity, setCurrentActivity] = useState("");
   const [approvalNote, setApprovalNote] = useState("");
@@ -241,6 +276,13 @@ function App() {
   const stageOptions = useMemo(() => createWorkflowStageOptions(steps), [steps]);
   const latestOutput = logLines.slice(-28);
   const chatTimelineItems = useMemo(() => toChatTimelineItems(chatLines), [chatLines]);
+  const orionAssistantRunning = orionAssistantActionCount > 0;
+  const composerButtonState = composerSendState({
+    workflowRunning,
+    assistantRunning: orionAssistantRunning,
+    approvalGate: Boolean(approvalGate),
+    clarificationGate: Boolean(clarificationGate),
+  });
   const workflowTotals = useMemo(() => {
     const finished = workflowMetrics.filter((metric) => metric.status === "done");
     return {
@@ -953,6 +995,7 @@ function App() {
     const text = requirement.trim();
     const attachments = pendingAttachments;
     const taskText = text || (attachments.length > 0 ? "请读取并处理我发送的附件。" : "");
+    if (orionAssistantRunning) return;
     if (workflowRunning) {
       requestStopWorkflow();
       return;
@@ -986,40 +1029,70 @@ function App() {
     }
     const orionCommand = parseOrionCommand(text, false);
     if (orionCommand.type === "create_plan") {
-      createOrionPlan(orionCommand.task);
+      createOrionPlan(orionCommand.task, { forceCustomWorkflow: true, userLine: `你：@orion ${orionCommand.task}` });
       setRequirement("");
       return;
     }
     setRequirement("");
-    await startRealWorkflow(taskText, attachments);
+    await handleOrionPrimaryConversation(taskText, attachments);
   }
 
-  function createOrionPlan(task: string) {
+  async function handleOrionPrimaryConversation(task: string, attachments: PendingAttachment[]) {
+    const projectFiles = summary?.files.map((file) => file.path) ?? workspaceFiles.map((file) => file.path);
+    const route = resolveOrionConversationRoute(task, {
+      workflows,
+      activeWorkflowId,
+      projectFiles,
+    });
+
+    if (route.kind === "assistant") {
+      createOrionAssistantConversation(task, { userLine: `你：${task}`, routeReason: route.reason });
+      return;
+    }
+    if (route.kind === "custom-workflow-draft") {
+      createOrionPlan(task, { forceCustomWorkflow: true, userLine: `你：${task}` });
+      return;
+    }
+
+    setChatLines((lines) => [...lines, `ORION：我会使用已有工作流「${route.workflow.name}」处理这个开发任务，不需要额外审核工作流草案。`]);
+    setLogLines((lines) => [...lines, `ORION route existing workflow: ${route.workflow.id}`, route.reason]);
+    await startRealWorkflow(task, attachments, route.workflow, {
+      skipNodeApprovals: true,
+      initiatedBy: "orion-existing-workflow",
+      routeReason: route.reason,
+    });
+  }
+
+  function createOrionAssistantConversation(task: string, options: { userLine: string; routeReason: string }) {
+    const response = createOrionAssistantResponse(task);
+    setOrionPendingPlan(null);
+    setInspectorView("output");
+    const needsConfirmation = response.actions.some((action) => action.risk !== "direct");
+    if (needsConfirmation) {
+      setOrionPendingAssistant({ task, message: response.message, actions: response.actions });
+    } else if (response.actions.length > 0) {
+      void executeOrionAssistantActions({ task, message: response.message, actions: response.actions }, "直接执行");
+    }
+    setChatLines((lines) => [
+      ...lines,
+      options.userLine,
+      response.message,
+      response.actions.length > 0
+        ? `ORION：准备了 ${response.actions.length} 个本机助手动作草案：${response.actions.map((action) => `${action.kind}[${action.risk}]`).join(" -> ")}。${needsConfirmation ? "请允许本次或驳回。" : "我会直接处理只读动作。"}`
+        : "ORION：这不像需求开发或 Bug 修复，我会先按普通本机助手对话处理，不创建 ORCH 工作流。",
+    ]);
+    setLogLines((lines) => [
+      ...lines,
+      `ORION assistant intent: ${options.routeReason}`,
+      ...response.actions.map((action) => `${action.kind} risk=${action.risk} ${action.summary}`),
+    ]);
+  }
+
+  function createOrionPlan(task: string, options: { forceCustomWorkflow?: boolean; userLine?: string } = {}) {
     const projectFiles = summary?.files.map((file) => file.path) ?? workspaceFiles.map((file) => file.path);
     const intent = classifyOrionIntent(task, { projectFiles });
-    if (intent.mode === "assistant") {
-      const response = createOrionAssistantResponse(task);
-      setOrionPendingPlan(null);
-      setInspectorView("output");
-      const needsConfirmation = response.actions.some((action) => action.risk !== "direct");
-      if (needsConfirmation) {
-        setOrionPendingAssistant({ task, message: response.message, actions: response.actions });
-      } else if (response.actions.length > 0) {
-        void executeOrionAssistantActions({ task, message: response.message, actions: response.actions }, "直接执行");
-      }
-      setChatLines((lines) => [
-        ...lines,
-        `你：@orion ${task}`,
-        response.message,
-        response.actions.length > 0
-          ? `ORION：准备了 ${response.actions.length} 个本机助手动作草案：${response.actions.map((action) => `${action.kind}[${action.risk}]`).join(" -> ")}。${needsConfirmation ? "请允许本次或驳回。" : "我会直接处理只读动作。"}`
-          : "ORION：这不像需求开发或 Bug 修复，我会先按普通本机助手对话处理，不创建 ORCH 工作流。",
-      ]);
-      setLogLines((lines) => [
-        ...lines,
-        `ORION assistant intent: ${intent.reason}`,
-        ...response.actions.map((action) => `${action.kind} risk=${action.risk} ${action.summary}`),
-      ]);
+    if (!options.forceCustomWorkflow && intent.mode === "assistant") {
+      createOrionAssistantConversation(task, { userLine: options.userLine ?? `你：${task}`, routeReason: intent.reason });
       return;
     }
     const workflow = draftOrionWorkflow(task);
@@ -1030,7 +1103,7 @@ function App() {
     setInspectorView("output");
     setChatLines((lines) => [
       ...lines,
-      `你：@orion ${task}`,
+      options.userLine ?? `你：${task}`,
       `ORION：我已为这个任务拟定工作流草案「${workflow.name}」，先不执行。`,
       `ORION：${workflow.steps.map((step, index) => `${index + 1}. ${step.owner} / ${step.stage}${step.skill_ids?.length ? `（${step.skill_ids.join(", ")}）` : ""}`).join("；")}`,
       `ORION：请审阅后选择“同意并运行”或“只保存工作流”；不合适可以驳回，也可以继续输入要求，例如“加 QA 全量覆盖”“让 DEV 参考某个文件”“先 Trellis 澄清”。`,
@@ -1140,22 +1213,27 @@ function App() {
 
   async function executeOrionAssistantActions(pending: OrionPendingAssistant, approvalLine: string) {
     setChatLines((lines) => [...lines, `你：${approvalLine}`, `ORION：开始执行 ${pending.actions.length} 个本机助手动作。`]);
-    for (const action of pending.actions) {
-      try {
-        const result = await executeOrionAssistantAction(action);
-        setChatLines((lines) => [...lines, `ORION：${result.message}`]);
-        setLogLines((lines) => [...lines, `ORION assistant action done: ${action.kind}`, result.message]);
-        if (result.stop) {
-          setChatLines((lines) => [...lines, "ORION：已停止后续本机助手动作，避免在失败状态下继续执行。"]);
-          setLogLines((lines) => [...lines, "ORION assistant action sequence stopped after failed command."]);
+    setOrionAssistantActionCount(pending.actions.length);
+    try {
+      for (const action of pending.actions) {
+        try {
+          const result = await executeOrionAssistantAction(action);
+          setChatLines((lines) => [...lines, `ORION：${result.message}`]);
+          setLogLines((lines) => [...lines, `ORION assistant action done: ${action.kind}`, result.message]);
+          if (result.stop) {
+            setChatLines((lines) => [...lines, "ORION：已停止后续本机助手动作，避免在失败状态下继续执行。"]);
+            setLogLines((lines) => [...lines, "ORION assistant action sequence stopped after failed command."]);
+            break;
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          setChatLines((lines) => [...lines, `ORION：动作执行失败：${message}`]);
+          setLogLines((lines) => [...lines, `ORION assistant action failed: ${action.kind}`, message]);
           break;
         }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        setChatLines((lines) => [...lines, `ORION：动作执行失败：${message}`]);
-        setLogLines((lines) => [...lines, `ORION assistant action failed: ${action.kind}`, message]);
-        break;
       }
+    } finally {
+      setOrionAssistantActionCount(0);
     }
   }
 
@@ -1168,6 +1246,73 @@ function App() {
   }
 
   async function executeOrionAssistantAction(action: OrionAction): Promise<{ message: string; stop: boolean }> {
+    if (action.kind === "local.inspectConfig") {
+      if (!canUseTauriCommands()) {
+        return {
+          message: `当前项目：${projectPath}；产物总目录：${appSettings.artifact_output_dir || "未设置，默认只保存到任务归档目录"}。完整本机配置路径需要在 Tauri 客户端中读取。`,
+          stop: false,
+        };
+      }
+      const result = await invoke<LocalConfigInspectionResult>("orion_inspect_local_config", { currentProject: projectPath });
+      return {
+        message: [
+          `设置文件：${result.settings_path}`,
+          `产物总目录：${result.artifact_output_dir || "未设置，默认只保存到任务归档目录"}`,
+          `任务归档目录：${result.tasks_dir}`,
+          `当前项目：${result.current_project}`,
+        ].join("；"),
+        stop: false,
+      };
+    }
+    if (action.kind === "file.searchProject") {
+      if (!canUseTauriCommands()) {
+        throw new Error("项目搜索需要在 Tauri 客户端中执行；浏览器预览不可用。");
+      }
+      const query = typeof action.payload.query === "string" ? action.payload.query : "";
+      const maxResults = typeof action.payload.max_results === "number" ? action.payload.max_results : 30;
+      const result = await invoke<ProjectSearchResult>("orion_search_project", {
+        input: { project_root: projectPath, query, max_results: maxResults },
+      });
+      return {
+        message: formatProjectSearchResult(result),
+        stop: false,
+      };
+    }
+    if (action.kind === "web.searchPublic" || action.kind === "web.searchSensitive") {
+      if (!canUseTauriCommands()) {
+        throw new Error("联网查询需要在 Tauri 客户端中执行；浏览器预览不可用。");
+      }
+      const query = typeof action.payload.query === "string" ? action.payload.query : "";
+      const maxResults = typeof action.payload.max_results === "number" ? action.payload.max_results : 5;
+      const result = await invoke<WebSearchResult>("orion_web_search", {
+        input: { query, max_results: maxResults },
+      });
+      return {
+        message: formatWebSearchResult(result),
+        stop: false,
+      };
+    }
+    if (action.kind === "file.writeGeneratedArtifactAuto" || action.kind === "file.writeGeneratedArtifact") {
+      if (!canUseTauriCommands()) {
+        throw new Error("写入产物文件需要在 Tauri 客户端中执行；浏览器预览不可用。");
+      }
+      const relativePath = typeof action.payload.relative_path === "string" ? action.payload.relative_path : "";
+      const content = typeof action.payload.content === "string" ? action.payload.content : "";
+      if (!relativePath || !content) {
+        return { message: "文件写入动作缺少相对路径或内容，已停止。", stop: true };
+      }
+      const archive = taskArchive ?? await tryStartTaskArchive(`ORION 本机助手：${action.payload.request ?? action.title}`);
+      if (!archive) {
+        return { message: "无法创建任务归档目录，已停止写入。", stop: true };
+      }
+      const result = await invoke<GeneratedArtifactWriteResult>("orion_write_generated_artifact", {
+        input: { task_dir: archive.path, relative_path: relativePath, content },
+      });
+      return {
+        message: `已写入 generated 产物：${result.path}（${result.bytes} bytes）。`,
+        stop: false,
+      };
+    }
     if (action.kind === "command.runWhitelisted") {
       if (!canUseTauriCommands()) {
         throw new Error("需要在 Tauri 客户端中执行本机命令；浏览器预览不可用。");
@@ -1192,7 +1337,7 @@ function App() {
       return {
         message: matches.length > 0
           ? `本地记忆命中：${matches.map((rule) => rule.title).join("；")}`
-          : "本地记忆没有命中相关资料；联网查阅能力还未接入。",
+          : "本地记忆没有命中相关资料；可以继续要求 ORION 上网查询公开资料。",
         stop: false,
       };
     }
@@ -1224,7 +1369,7 @@ function App() {
     setChatLines((lines) => [...lines, `你：${approvalLine}`, shouldRun ? `ORION：已保存工作流「${plan.workflow.name}」，现在交给 ORCH Core 执行。` : `ORION：已保存工作流「${plan.workflow.name}」，不会自动运行。`]);
     setLogLines((lines) => [...lines, `ORION execute: saved workflow ${plan.workflow.id}`]);
     if (shouldRun) {
-      await startRealWorkflow(plan.task, [], plan.workflow);
+      await startRealWorkflow(plan.task, [], plan.workflow, { initiatedBy: "orion-custom-workflow" });
     }
   }
 
@@ -1250,7 +1395,7 @@ function App() {
     if (event.dataTransfer.files.length > 0) void addAttachmentFiles(event.dataTransfer.files);
   }
 
-  async function startRealWorkflow(task: string, attachments: PendingAttachment[] = [], workflowOverride?: WorkflowDefinition) {
+  async function startRealWorkflow(task: string, attachments: PendingAttachment[] = [], workflowOverride?: WorkflowDefinition, options: WorkflowRunOptions = {}) {
     if (!canUseTauriCommands()) {
       setLogLines((lines) => [...lines, "真实流程需要在 Tauri 客户端中运行；浏览器预览只能查看界面。"]);
       return;
@@ -1268,7 +1413,12 @@ function App() {
     }
     workflowStopRequestedRef.current = false;
     const routeDecision = workflowOverride
-      ? { workflow: workflowOverride, confidence: "high" as const, reason: "ORION 已确认并保存该工作流。", matchedKind: "current" as const }
+      ? {
+        workflow: workflowOverride,
+        confidence: "high" as const,
+        reason: options.routeReason ?? (options.initiatedBy === "orion-existing-workflow" ? "ORION 已判断为开发任务，使用已有工作流。此路径不需要审核自定义工作流草案。" : "ORION 已确认并保存该工作流。"),
+        matchedKind: "current" as const,
+      }
       : recommendWorkflowForTask(task, workflows, activeWorkflowId);
     const selectedWorkflow = routeDecision.workflow;
     const enabledSteps = selectedWorkflow.steps.filter((step) => step.enabled !== false);
@@ -1316,6 +1466,7 @@ function App() {
       workflowStart,
       runTotals: { elapsed_ms: 0, input_tokens: 0, output_tokens: 0, total_tokens: 0 },
       artifactRetries: {},
+      skipNodeApprovals: options.skipNodeApprovals,
     });
   }
 
@@ -1429,7 +1580,7 @@ function App() {
           stoppedByUser = true;
           break;
         }
-        if (step.approval === "user") {
+        if (step.approval === "user" && !runtime.skipNodeApprovals) {
           pausedForApproval = true;
           setWorkflowRunning(false);
           setCurrentActivity(`等待审批：${step.owner} / ${step.stage}`);
@@ -1710,7 +1861,7 @@ function App() {
               ? <article className="user-message-row" key={`chat-${item.text}-${index}`}><div className="user-message-bubble">{item.text}</div></article>
               : <p className={item.tone === "error" ? "error-line" : "system-line"} key={`chat-${item.text}-${index}`}><span>$</span><span className="line-text">{item.text}</span></p>
             )}
-            {(workflowRunning || approvalGate || clarificationGate) && <p className="thinking-line" aria-live="polite"><span>$</span><span className="thinking-content">{currentActivity || "ORCH 处理中"}{workflowRunning && <><i></i><i></i><i></i></>}</span></p>}
+            {(workflowRunning || approvalGate || clarificationGate || orionAssistantRunning) && <p className="thinking-line" aria-live="polite"><span>$</span><span className="thinking-content">{orionAssistantRunning ? assistantActivityLine(orionAssistantActionCount) : currentActivity || "ORCH 处理中"}{(workflowRunning || orionAssistantRunning) && <><i></i><i></i><i></i></>}</span></p>}
           </div>
         </section>
         {shouldShowWorkflowProgressFloat && <aside className="workflow-progress-float" aria-label="流程流转进度">
@@ -1785,7 +1936,7 @@ function App() {
               <button type="button" aria-label={`移除附件 ${attachment.name}`} onClick={() => removePendingAttachment(attachment.id)}>×</button>
             </div>)}
           </div>}
-          <textarea value={requirement} placeholder={clarificationGate ? "直接回答 Trellis 的澄清问题" : "告诉 ORION 你想做什么，或粘贴/拖入文件"} onPaste={handleComposerPaste} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} onChange={(event) => setRequirement(event.target.value)} aria-label="需求描述" />
+          <textarea value={requirement} disabled={orionAssistantRunning} placeholder={orionAssistantRunning ? "ORION 正在执行本机助手动作" : clarificationGate ? "直接回答 Trellis 的澄清问题" : "告诉 ORION 你想做什么，或粘贴/拖入文件"} onPaste={handleComposerPaste} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} onChange={(event) => setRequirement(event.target.value)} aria-label="需求描述" />
           <div className="composer-toolbar">
             <div className="template-picker" onClick={(event) => event.stopPropagation()}>
               <button type="button" aria-haspopup="listbox" aria-expanded={workflowMenuOpen} onClick={() => setWorkflowMenuOpen((open) => !open)}>{activeWorkflow?.name ?? "选择工作流"}</button>
@@ -1793,7 +1944,7 @@ function App() {
                 {workflows.map((workflow) => <button type="button" role="option" aria-selected={activeWorkflowId === workflow.id} key={workflow.id} onClick={() => { setActiveWorkflowId(workflow.id); setWorkflowMenuOpen(false); }}>{workflow.name}{workflow.isDefault ? " · 默认" : ""}</button>)}
               </div>}
             </div>
-            <button type="submit" className={workflowRunning ? "stop-workflow-button" : ""} aria-label={workflowRunning ? "终止当前流程" : approvalGate ? "提交审批意见" : clarificationGate ? "提交澄清回答" : "启动工作流"} title={workflowRunning ? "终止当前流程" : "启动工作流"}>{workflowRunning ? "" : "↑"}</button>
+            <button type="submit" className={composerButtonState.className} disabled={composerButtonState.disabled} aria-label={composerButtonState.ariaLabel} title={composerButtonState.title}>{composerButtonState.content}</button>
           </div>
         </form>
       </section>

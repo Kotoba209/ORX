@@ -163,6 +163,49 @@ function taskLooksLikeInstallWork(task: string) {
 }
 
 function createAssistantActions(task: string) {
+  if (taskLooksLikeFileWrite(task)) {
+    const draft = parseWriteRequest(task);
+    const safeGeneratedWrite = taskLooksLikeGeneratedWrite(task) && draft.relative_path && draft.content;
+    return [
+      createOrionAction(
+        safeGeneratedWrite ? "file.writeGeneratedArtifactAuto" : "file.writeGeneratedArtifact",
+        safeGeneratedWrite ? "自动写入产物文件" : "准备文件写入",
+        safeGeneratedWrite ? "写入任务 generated 产物目录。" : "写入请求涉及项目或配置文件，执行前需要确认。",
+        { ...draft, request: task },
+      ),
+    ];
+  }
+  if (taskLooksLikeLocalConfigLookup(task)) {
+    return [
+      createOrionAction(
+        "local.inspectConfig",
+        "查看本机配置路径",
+        "读取 ORX 本机配置、产物目录和任务归档目录。",
+        { request: task, include: ["settings_path", "artifact_output_dir", "tasks_dir", "current_project"] },
+      ),
+    ];
+  }
+  if (taskLooksLikeProjectSearch(task)) {
+    return [
+      createOrionAction(
+        "file.searchProject",
+        "搜索当前项目",
+        `在当前项目内搜索：${extractProjectSearchQuery(task)}`,
+        { query: extractProjectSearchQuery(task), request: task, max_results: 30 },
+      ),
+    ];
+  }
+  if (taskLooksLikeWebSearch(task)) {
+    const query = extractWebSearchQuery(task);
+    return [
+      createOrionAction(
+        webSearchLooksSensitive(query) ? "web.searchSensitive" : "web.searchPublic",
+        webSearchLooksSensitive(query) ? "准备敏感联网查询" : "联网查询公开资料",
+        webSearchLooksSensitive(query) ? "查询内容可能包含本机路径、日志或代码片段，执行前需要确认。" : `联网查询公开资料：${query}`,
+        { query, request: task, max_results: 5 },
+      ),
+    ];
+  }
   if (taskLooksLikeProjectHealthCheck(task)) {
     return projectHealthActions(task);
   }
@@ -209,6 +252,58 @@ function createAssistantActions(task: string) {
     ];
   }
   return [];
+}
+
+function taskLooksLikeLocalConfigLookup(task: string) {
+  return /(artifact|output dir|settings\.json|config path|task archive|产物|生成配置|配置路径|任务归档|保存到哪里|目录在哪|路径在哪)/i.test(task);
+}
+
+function taskLooksLikeProjectSearch(task: string) {
+  return /(search|grep|find in project|项目里搜索|项目内搜索|在项目里搜|在项目内搜|搜索代码|查找代码|搜文件|查找文件)/i.test(task)
+    && !taskLooksLikeWebSearch(task);
+}
+
+function extractProjectSearchQuery(task: string) {
+  return task
+    .trim()
+    .replace(/^(please\s+)?(search|grep|find)\s+/i, "")
+    .replace(/^(在)?(当前)?项目(里|内)?(搜索|搜|查找)\s*/i, "")
+    .replace(/^(搜索|查找)(代码|文件)?\s*/i, "")
+    .trim();
+}
+
+function taskLooksLikeWebSearch(task: string) {
+  return /(web search|search web|internet|online|google|bing|duckduckgo|上网|联网|网上|网页|搜索引擎)/i.test(task);
+}
+
+function extractWebSearchQuery(task: string) {
+  return task
+    .trim()
+    .replace(/^(please\s+)?(web search|search web|search online|google|bing|duckduckgo)\s*/i, "")
+    .replace(/^(帮我|请)?(上网|联网|网上|网页)(查询|搜索|查一下|查|搜一下|搜)?\s*/i, "")
+    .trim();
+}
+
+function webSearchLooksSensitive(query: string) {
+  return /([a-z]:\\|\\\\|\/home\/|\/users\/|appdata|\.env|token|api[_-]?key|secret|password|报错日志|错误日志|代码片段|私有|内网)/i.test(query);
+}
+
+function taskLooksLikeFileWrite(task: string) {
+  return /(write|save|create file|写入|写到|自动写|保存|生成文件|创建文件)/i.test(task);
+}
+
+function taskLooksLikeGeneratedWrite(task: string) {
+  return /(generated|artifact|产物目录|生成目录|generated\s*目录|任务产物)/i.test(task);
+}
+
+function parseWriteRequest(task: string) {
+  const contentMatch = task.match(/(?:内容|content)\s*[:：]\s*([\s\S]+)$/i);
+  const beforeContent = contentMatch ? task.slice(0, contentMatch.index).trim() : task.trim();
+  const pathMatch = beforeContent.match(/([^\s"'：:]+?\.(?:md|txt|json|html|css|ts|tsx|js|jsx|rs|toml|yaml|yml))\b/i);
+  return {
+    relative_path: pathMatch?.[1] ?? "",
+    content: contentMatch?.[1]?.trim() ?? "",
+  };
 }
 
 function commandPayload(task: string, program: string, args: string[], commandRole: string) {

@@ -9,6 +9,10 @@ import {
 
 test("maps ORION direct actions to direct risk", () => {
   assert.equal(getOrionActionRisk("file.readProjectFile"), "direct");
+  assert.equal(getOrionActionRisk("file.searchProject"), "direct");
+  assert.equal(getOrionActionRisk("local.inspectConfig"), "direct");
+  assert.equal(getOrionActionRisk("web.searchPublic"), "direct");
+  assert.equal(getOrionActionRisk("file.writeGeneratedArtifactAuto"), "direct");
   assert.equal(getOrionActionRisk("workflow.recommend"), "direct");
   assert.equal(getOrionActionRisk("workflow.create"), "direct");
   assert.equal(getOrionActionRisk("workflow.run"), "direct");
@@ -18,6 +22,7 @@ test("maps ORION direct actions to direct risk", () => {
 
 test("maps ORION local mutation and build actions to confirm risk", () => {
   assert.equal(getOrionActionRisk("file.writeGeneratedArtifact"), "confirm");
+  assert.equal(getOrionActionRisk("web.searchSensitive"), "confirm");
   assert.equal(getOrionActionRisk("command.runWhitelisted"), "confirm");
   assert.equal(getOrionActionRisk("release.build"), "confirm");
   assert.equal(getOrionActionRisk("memory.append"), "confirm");
@@ -33,6 +38,8 @@ test("maps ORION destructive and git actions to strong confirmation risk", () =>
 
 test("confirmation helper treats direct actions as immediately executable", () => {
   assert.equal(actionNeedsConfirmation("file.readProjectFile"), false);
+  assert.equal(actionNeedsConfirmation("web.searchPublic"), false);
+  assert.equal(actionNeedsConfirmation("web.searchSensitive"), true);
   assert.equal(actionNeedsConfirmation("release.build"), true);
   assert.equal(actionNeedsConfirmation("git.push"), true);
 });

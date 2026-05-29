@@ -25,4 +25,5 @@ dist-ssr
 
 # Local runtime output
 run-logs/
+src-tauri/target-msvc/
 
