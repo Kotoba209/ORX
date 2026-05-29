@@ -24,6 +24,8 @@ export type OrionActionKind =
   | "file.writeGeneratedArtifactAuto"
   | "file.writeGeneratedArtifact"
   | "command.runWhitelisted"
+  | "command.reviewSandbox"
+  | "command.runWorktreeSandbox"
   | "release.build"
   | "git.commit"
   | "git.tag"
@@ -60,6 +62,8 @@ const riskByAction: Record<OrionActionKind, OrionRiskLevel> = {
   "memory.update": "confirm",
   "file.writeGeneratedArtifact": "confirm",
   "command.runWhitelisted": "confirm",
+  "command.reviewSandbox": "confirm",
+  "command.runWorktreeSandbox": "confirm",
   "release.build": "confirm",
   "workflow.delete": "strong-confirm",
   "workflow.setDefault": "strong-confirm",

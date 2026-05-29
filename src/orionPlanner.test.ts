@@ -80,6 +80,22 @@ test("assistant response drafts non-workflow actions without creating workflow a
   });
 });
 
+test("assistant response routes non-whitelisted commands to worktree sandbox execution", () => {
+  const response = createOrionAssistantResponse("运行 pnpm lint");
+
+  assert.equal(response.mode, "assistant");
+  assert.deepEqual(response.actions.map((action) => action.kind), ["command.runWorktreeSandbox"]);
+  assert.equal(response.actions[0].risk, "confirm");
+  assert.deepEqual(response.actions[0].payload, {
+    program: "pnpm",
+    args: ["lint"],
+    cwd: "",
+    request: "运行 pnpm lint",
+    sandbox_required: true,
+    sandbox_kind: "git-worktree",
+  });
+});
+
 test("assistant response maps project health checks to status selftest and build commands", () => {
   const response = createOrionAssistantResponse("检查项目状态和构建");
 
@@ -198,6 +214,13 @@ test("assistant response maps public and sensitive web searches to different ris
 
   assert.deepEqual(sensitiveResponse.actions.map((action) => action.kind), ["web.searchSensitive"]);
   assert.equal(sensitiveResponse.actions[0].risk, "confirm");
+});
+
+test("assistant response treats website analysis with server environment wording as web search", () => {
+  const response = createOrionAssistantResponse("分析这个是一个什么网站，运行在什么服务器环境 https://hnr.pages.dev/");
+
+  assert.deepEqual(response.actions.map((action) => action.kind), ["web.searchPublic"]);
+  assert.equal(response.actions[0].payload.query, "https://hnr.pages.dev/");
 });
 
 test("assistant response allows auto writes only for generated artifact requests", () => {

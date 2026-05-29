@@ -22,6 +22,8 @@ use orion_actions::{
     ProjectFileReadResult,
     ProjectSearchInput,
     ProjectSearchResult,
+    SandboxCommandInput,
+    SandboxCommandResult,
     WebSearchInput,
     WebSearchResult,
     WhitelistedCommandInput,
@@ -221,6 +223,11 @@ fn orion_run_whitelisted_command(input: WhitelistedCommandInput) -> Result<White
 }
 
 #[tauri::command]
+fn orion_run_sandboxed_command(input: SandboxCommandInput) -> Result<SandboxCommandResult, String> {
+    orion_actions::run_sandboxed_command(input)
+}
+
+#[tauri::command]
 fn orion_action_risk(kind: String) -> String {
     orion_actions::orion_action_risk(&kind).to_string()
 }
@@ -261,6 +268,7 @@ pub fn run() {
             orion_write_generated_artifact,
             orion_validate_whitelisted_command,
             orion_run_whitelisted_command,
+            orion_run_sandboxed_command,
             orion_action_risk
         ])
         .run(tauri::generate_context!())

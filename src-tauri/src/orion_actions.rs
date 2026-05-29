@@ -99,6 +99,28 @@ pub struct WhitelistedCommandResult {
     pub stderr: String,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct SandboxCommandInput {
+    pub project_root: String,
+    pub program: String,
+    pub args: Vec<String>,
+    pub timeout_secs: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct SandboxCommandResult {
+    pub program: String,
+    pub args: Vec<String>,
+    pub project_root: String,
+    pub sandbox_path: String,
+    pub status: i32,
+    pub stdout: String,
+    pub stderr: String,
+    pub changed_files: Vec<String>,
+    pub diff_stat: String,
+    pub elapsed_ms: u128,
+}
+
 pub fn inspect_local_config(settings_path: PathBuf, artifact_output_dir: String, tasks_dir: PathBuf, current_project: String) -> LocalConfigInspectionResult {
     LocalConfigInspectionResult {
         settings_path: settings_path.display().to_string(),
@@ -274,6 +296,36 @@ pub fn run_whitelisted_command(input: WhitelistedCommandInput) -> Result<Whiteli
     })
 }
 
+pub fn run_sandboxed_command(input: SandboxCommandInput) -> Result<SandboxCommandResult, String> {
+    validate_sandbox_command(&input.program, &input.args)?;
+    let root = canonical_dir(&input.project_root)?;
+    ensure_git_project_clean(&root)?;
+    let sandbox_root = std::env::temp_dir().join("orx-worktree-sandbox");
+    fs::create_dir_all(&sandbox_root).map_err(|error| format!("创建沙箱根目录失败: {error}"))?;
+    let sandbox_path = sandbox_root.join(format!("run-{}", current_millis()));
+    run_git_checked(&root, &["worktree", "add", "--detach", sandbox_path.to_string_lossy().as_ref(), "HEAD"])?;
+
+    let timeout = Duration::from_secs(input.timeout_secs.unwrap_or(120).clamp(5, 600));
+    let started = std::time::Instant::now();
+    let (status, stdout, stderr) = run_process_with_timeout(&input.program, &input.args, &sandbox_path, timeout);
+    let elapsed_ms = started.elapsed().as_millis();
+    let changed_files = sandbox_changed_files(&sandbox_path).unwrap_or_default();
+    let diff_stat = sandbox_diff_stat(&sandbox_path).unwrap_or_default();
+
+    Ok(SandboxCommandResult {
+        program: input.program,
+        args: input.args,
+        project_root: root.display().to_string(),
+        sandbox_path: sandbox_path.display().to_string(),
+        status,
+        stdout,
+        stderr,
+        changed_files,
+        diff_stat,
+        elapsed_ms,
+    })
+}
+
 pub fn orion_action_risk(kind: &str) -> &'static str {
     match kind {
         "project.inspect"
@@ -297,6 +349,8 @@ pub fn orion_action_risk(kind: &str) -> &'static str {
         | "web.searchSensitive"
         | "file.writeGeneratedArtifact"
         | "command.runWhitelisted"
+        | "command.reviewSandbox"
+        | "command.runWorktreeSandbox"
         | "release.build" => "confirm",
         "workflow.delete" | "workflow.setDefault" | "git.commit" | "git.tag" | "git.push" => "strong-confirm",
         _ => "strong-confirm",
@@ -316,6 +370,116 @@ fn canonical_or_create_dir(path: &str) -> Result<PathBuf, String> {
     let path = PathBuf::from(path.trim());
     fs::create_dir_all(&path).map_err(|error| format!("创建目录失败: {error}"))?;
     canonical_dir(path.to_string_lossy().as_ref())
+}
+
+fn validate_sandbox_command(program: &str, args: &[String]) -> Result<(), String> {
+    let normalized = program.trim().to_ascii_lowercase();
+    let shell_programs = ["cmd", "cmd.exe", "powershell", "powershell.exe", "pwsh", "pwsh.exe", "bash", "sh", "wsl", "wsl.exe"];
+    if shell_programs.contains(&normalized.as_str()) {
+        return Err("拒绝在沙箱中执行 shell 包装命令；请提供直接程序和参数。".to_string());
+    }
+    let blocked_programs = ["rm", "del", "remove-item", "format", "reg", "reg.exe", "netsh", "shutdown"];
+    if blocked_programs.contains(&normalized.as_str()) {
+        return Err(format!("拒绝在沙箱中执行高风险程序: {program}"));
+    }
+    if normalized == "git" {
+        let joined = args.iter().map(|arg| arg.to_ascii_lowercase()).collect::<Vec<_>>().join(" ");
+        if joined.starts_with("reset") || joined.starts_with("clean") || joined.starts_with("push") {
+            return Err(format!("拒绝在沙箱中执行高风险 git 命令: git {joined}"));
+        }
+    }
+    Ok(())
+}
+
+fn ensure_git_project_clean(root: &Path) -> Result<(), String> {
+    run_git_checked(root, &["rev-parse", "--show-toplevel"])?;
+    let output = run_git_output(root, &["status", "--porcelain"])?;
+    if !output.trim().is_empty() {
+        return Err("当前项目有未提交改动；第一版 worktree 沙箱不会自动带入脏工作区，请先提交/暂存或清理后再运行。".to_string());
+    }
+    Ok(())
+}
+
+fn run_git_checked(root: &Path, args: &[&str]) -> Result<String, String> {
+    let output = run_git_output(root, args)?;
+    Ok(output)
+}
+
+fn run_git_output(root: &Path, args: &[&str]) -> Result<String, String> {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(root)
+        .output()
+        .map_err(|error| format!("执行 git 失败: {error}"))?;
+    if !output.status.success() {
+        return Err(format!("git {} 失败: {}", args.join(" "), String::from_utf8_lossy(&output.stderr)));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+fn run_process_with_timeout(program: &str, args: &[String], cwd: &Path, timeout: Duration) -> (i32, String, String) {
+    let started = std::time::Instant::now();
+    let child_result = Command::new(program)
+        .args(args)
+        .current_dir(cwd)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn();
+    let mut child = match child_result {
+        Ok(child) => child,
+        Err(error) => return (-1, String::new(), format!("启动沙箱命令失败: {error}")),
+    };
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => match child.wait_with_output() {
+                Ok(output) => {
+                    return (
+                        output.status.code().unwrap_or(-1),
+                        String::from_utf8_lossy(&output.stdout).to_string(),
+                        String::from_utf8_lossy(&output.stderr).to_string(),
+                    );
+                }
+                Err(error) => return (-1, String::new(), format!("读取沙箱命令输出失败: {error}")),
+            },
+            Ok(None) => {
+                if started.elapsed() > timeout {
+                    let _ = child.kill();
+                    return match child.wait_with_output() {
+                        Ok(output) => (
+                            -1,
+                            String::from_utf8_lossy(&output.stdout).to_string(),
+                            format!("沙箱命令超时，已终止。\n{}", String::from_utf8_lossy(&output.stderr)),
+                        ),
+                        Err(error) => (-1, String::new(), format!("沙箱命令超时且读取输出失败: {error}")),
+                    };
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(error) => return (-1, String::new(), format!("等待沙箱命令失败: {error}")),
+        }
+    }
+}
+
+fn sandbox_changed_files(sandbox_path: &Path) -> Result<Vec<String>, String> {
+    let output = run_git_output(sandbox_path, &["status", "--short"])?;
+    Ok(output
+        .lines()
+        .map(|line| line.get(3..).unwrap_or(line).trim().to_string())
+        .filter(|line| !line.is_empty())
+        .collect())
+}
+
+fn sandbox_diff_stat(sandbox_path: &Path) -> Result<String, String> {
+    let unstaged = run_git_output(sandbox_path, &["diff", "--stat"])?;
+    let staged = run_git_output(sandbox_path, &["diff", "--cached", "--stat"])?;
+    Ok([unstaged.trim(), staged.trim()].into_iter().filter(|part| !part.is_empty()).collect::<Vec<_>>().join("\n"))
+}
+
+fn current_millis() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
 }
 
 fn safe_relative_path(value: &str) -> Result<PathBuf, String> {
@@ -741,6 +905,68 @@ mod tests {
     }
 
     #[test]
+    fn runs_sandboxed_command_in_temporary_git_worktree() {
+        let root = std::env::temp_dir().join(format!("orx_sandbox_repo_{}", current_millis_for_test()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("README.md"), "base").unwrap();
+        run_git_for_test(&root, &["init"]);
+        run_git_for_test(&root, &["config", "user.email", "orx@example.local"]);
+        run_git_for_test(&root, &["config", "user.name", "ORX Test"]);
+        run_git_for_test(&root, &["add", "README.md"]);
+        run_git_for_test(&root, &["commit", "-m", "init"]);
+
+        let result = run_sandboxed_command(SandboxCommandInput {
+            project_root: root.display().to_string(),
+            program: "node".to_string(),
+            args: vec!["-e".to_string(), "require('fs').writeFileSync('sandbox.txt','ok')".to_string()],
+            timeout_secs: Some(15),
+        })
+        .unwrap();
+
+        assert_eq!(result.status, 0);
+        assert!(result.sandbox_path.contains("orx-worktree-sandbox"));
+        assert!(result.changed_files.iter().any(|file| file.ends_with("sandbox.txt")));
+        assert!(!root.join("sandbox.txt").exists());
+
+        let _ = Command::new("git").args(["worktree", "remove", "--force", &result.sandbox_path]).current_dir(&root).output();
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn sandboxed_command_rejects_dirty_project_and_shell_programs() {
+        let root = std::env::temp_dir().join(format!("orx_sandbox_dirty_{}", current_millis_for_test()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("README.md"), "base").unwrap();
+        run_git_for_test(&root, &["init"]);
+        run_git_for_test(&root, &["config", "user.email", "orx@example.local"]);
+        run_git_for_test(&root, &["config", "user.name", "ORX Test"]);
+        run_git_for_test(&root, &["add", "README.md"]);
+        run_git_for_test(&root, &["commit", "-m", "init"]);
+        fs::write(root.join("dirty.txt"), "dirty").unwrap();
+
+        let dirty = run_sandboxed_command(SandboxCommandInput {
+            project_root: root.display().to_string(),
+            program: "node".to_string(),
+            args: vec!["--version".to_string()],
+            timeout_secs: Some(15),
+        });
+        assert!(dirty.unwrap_err().contains("未提交改动"));
+
+        fs::remove_file(root.join("dirty.txt")).unwrap();
+        let shell = run_sandboxed_command(SandboxCommandInput {
+            project_root: root.display().to_string(),
+            program: "powershell".to_string(),
+            args: vec!["-Command".to_string(), "Write-Host bad".to_string()],
+            timeout_secs: Some(15),
+        });
+        assert!(shell.unwrap_err().contains("拒绝在沙箱中执行 shell"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn classifies_orion_action_risk_for_release_and_git() {
         assert_eq!(orion_action_risk("file.readProjectFile"), "direct");
         assert_eq!(orion_action_risk("file.searchProject"), "direct");
@@ -752,5 +978,17 @@ mod tests {
         assert_eq!(orion_action_risk("release.build"), "confirm");
         assert_eq!(orion_action_risk("workflow.delete"), "strong-confirm");
         assert_eq!(orion_action_risk("git.push"), "strong-confirm");
+    }
+
+    fn run_git_for_test(root: &Path, args: &[&str]) {
+        let output = Command::new("git").args(args).current_dir(root).output().unwrap();
+        assert!(output.status.success(), "git {:?} failed: {}", args, String::from_utf8_lossy(&output.stderr));
+    }
+
+    fn current_millis_for_test() -> u128 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
     }
 }

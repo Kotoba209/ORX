@@ -24,6 +24,8 @@ test("maps ORION local mutation and build actions to confirm risk", () => {
   assert.equal(getOrionActionRisk("file.writeGeneratedArtifact"), "confirm");
   assert.equal(getOrionActionRisk("web.searchSensitive"), "confirm");
   assert.equal(getOrionActionRisk("command.runWhitelisted"), "confirm");
+  assert.equal(getOrionActionRisk("command.reviewSandbox"), "confirm");
+  assert.equal(getOrionActionRisk("command.runWorktreeSandbox"), "confirm");
   assert.equal(getOrionActionRisk("release.build"), "confirm");
   assert.equal(getOrionActionRisk("memory.append"), "confirm");
 });

@@ -209,14 +209,15 @@ function createAssistantActions(task: string) {
   if (taskLooksLikeProjectHealthCheck(task)) {
     return projectHealthActions(task);
   }
-  if (/(run|execute|command|shell|script|执行|运行|命令|脚本)/i.test(task)) {
+  if (taskLooksLikeExplicitCommandRun(task)) {
     const command = parseWhitelistedCommandRequest(task);
+    const allowed = commandLooksWhitelisted(command.program, command.args);
     return [
       createOrionAction(
-        "command.runWhitelisted",
-        "Prepare command",
-        `Prepare a local command action for: ${task}`,
-        { ...command, request: task },
+        allowed ? "command.runWhitelisted" : "command.runWorktreeSandbox",
+        allowed ? "Prepare command" : "准备 worktree 沙箱执行",
+        allowed ? `Prepare a local command action for: ${task}` : `命令不在直通白名单内，确认后将在临时 git worktree 沙箱中执行：${command.program} ${command.args.join(" ")}`.trim(),
+        allowed ? { ...command, request: task } : { ...command, request: task, sandbox_required: true, sandbox_kind: "git-worktree" },
       ),
     ];
   }
@@ -273,15 +274,25 @@ function extractProjectSearchQuery(task: string) {
 }
 
 function taskLooksLikeWebSearch(task: string) {
-  return /(web search|search web|internet|online|google|bing|duckduckgo|上网|联网|网上|网页|搜索引擎)/i.test(task);
+  return /(https?:\/\/|www\.|web search|search web|internet|online|google|bing|duckduckgo|上网|联网|网上|网页|网站|搜索引擎)/i.test(task);
 }
 
 function extractWebSearchQuery(task: string) {
+  const urlMatch = task.match(/https?:\/\/\S+|www\.\S+/i);
+  if (urlMatch) return urlMatch[0].replace(/[，,。]+$/, "");
   return task
     .trim()
     .replace(/^(please\s+)?(web search|search web|search online|google|bing|duckduckgo)\s*/i, "")
     .replace(/^(帮我|请)?(上网|联网|网上|网页)(查询|搜索|查一下|查|搜一下|搜)?\s*/i, "")
+    .replace(/^分析(这个)?(是一个什么)?网站[，,\s]*/i, "")
     .trim();
+}
+
+function taskLooksLikeExplicitCommandRun(task: string) {
+  return /^(run|execute)\s+\S+/i.test(task.trim())
+    || /(command|shell|script)\s+/i.test(task)
+    || /(执行|运行)\s*(命令|脚本)\s*/i.test(task)
+    || /^(执行|运行)\s+\S+/i.test(task.trim());
 }
 
 function webSearchLooksSensitive(query: string) {
@@ -347,7 +358,7 @@ function taskLooksLikeProjectHealthCheck(task: string) {
 }
 
 function taskLooksLikeVersionCheck(task: string) {
-  return /(version|versions|environment|toolchain|node|npm|rust|cargo|环境|版本|工具链)/i.test(task);
+  return /(version|versions|environment|toolchain|\bnode\b|\bnpm\b|\brust\b|\bcargo\b|环境|版本|工具链)/i.test(task);
 }
 
 function resolveTrustedInstallPackage(task: string) {
@@ -379,6 +390,20 @@ function parseWhitelistedCommandRequest(task: string) {
     args: parts.slice(1),
     cwd: "",
   };
+}
+
+function commandLooksWhitelisted(program: string, args: string[]) {
+  const normalizedProgram = program.trim().toLowerCase();
+  const normalizedArgs = args.map((arg) => arg.trim().toLowerCase());
+  return (normalizedProgram === "node" && normalizedArgs.length === 1 && normalizedArgs[0] === "--version")
+    || (normalizedProgram === "npm" && normalizedArgs.length === 1 && normalizedArgs[0] === "--version")
+    || (normalizedProgram === "rustc" && normalizedArgs.length === 1 && normalizedArgs[0] === "-v")
+    || (normalizedProgram === "cargo" && normalizedArgs.length === 1 && normalizedArgs[0] === "-v")
+    || (normalizedProgram === "git" && normalizedArgs.join(" ") === "status --short --branch")
+    || (normalizedProgram === "npm" && normalizedArgs.join(" ") === "run workflow:selftest")
+    || (normalizedProgram === "npm" && normalizedArgs.join(" ") === "run build")
+    || (normalizedProgram === "npm" && normalizedArgs.join(" ") === "run tauri -- build")
+    || (normalizedProgram === "cargo" && normalizedArgs.length === 1 && normalizedArgs[0] === "test");
 }
 
 function step(stage: string, owner: string, instruction: string): WorkflowStep {

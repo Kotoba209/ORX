@@ -4729,6 +4729,115 @@ textarea {
   opacity: 1 !important;
 }
 
+.orion-activity-run {
+  display: grid;
+  gap: 14px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.orion-activity-run > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.orion-activity-run > header div {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.orion-activity-run > header strong {
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 760;
+}
+
+.orion-activity-run > header span {
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.orion-activity-run > header em {
+  flex: 0 0 auto;
+  color: var(--accent);
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 720;
+}
+
+.orion-activity-steps {
+  display: grid;
+  gap: 8px;
+}
+
+.orion-activity-step {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-soft);
+}
+
+.orion-activity-step > span {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--surface-muted);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.orion-activity-step.done > span {
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.orion-activity-step.running > span {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.orion-activity-step.failed > span {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.orion-activity-step div {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.orion-activity-step strong {
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 720;
+}
+
+.orion-activity-step p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.orion-activity-float {
+  padding: 14px;
+}
+
 
 
 

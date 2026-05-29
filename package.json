@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "workflow:selftest": "node --test --experimental-strip-types src/workflowState.test.ts src/projectTree.test.ts src/workflowConfig.test.ts src/chatTimeline.test.ts src/workflowStageOptions.test.ts src/workflowRouter.test.ts src/orionConversationRouter.test.ts src/memoryRules.test.ts src/memoryCandidates.test.ts src/clarificationState.test.ts src/orionActions.test.ts src/orionPlanner.test.ts src/orionPermission.test.ts src/orionCommands.test.ts src/orionAssistantActivity.test.ts src/orionRunMonitor.test.ts src/orionCommandResults.test.ts src/workflowRunGuards.test.ts",
+    "workflow:selftest": "node --test --experimental-strip-types src/workflowState.test.ts src/projectTree.test.ts src/workflowConfig.test.ts src/chatTimeline.test.ts src/workflowStageOptions.test.ts src/workflowRouter.test.ts src/orionConversationRouter.test.ts src/memoryRules.test.ts src/memoryCandidates.test.ts src/clarificationState.test.ts src/orionActions.test.ts src/orionPlanner.test.ts src/orionPermission.test.ts src/orionCommands.test.ts src/orionAssistantActivity.test.ts src/orionActivityRun.test.ts src/orionRunMonitor.test.ts src/orionCommandResults.test.ts src/workflowRunGuards.test.ts",
     "preview": "vite preview",
     "tauri": "scripts\\tauri-msvc.cmd"
   },

@@ -51,8 +51,17 @@ import { resolveOrionConversationRoute } from "./orionConversationRouter";
 import { groupOrionActionsByRisk, type OrionAction, type OrionRiskLevel } from "./orionActions";
 import { actionRiskSummary, formatOrionPayloadPreview, highestOrionRisk, orionRiskLabel } from "./orionPermission";
 import { monitorOrionNodeResult, type OrionSuggestedAction } from "./orionRunMonitor";
-import { formatWhitelistedCommandResult, shouldStopAfterCommandResult, type WhitelistedCommandResult } from "./orionCommandResults";
+import { formatSandboxCommandResult, formatWhitelistedCommandResult, shouldStopAfterCommandResult, type SandboxCommandResult, type WhitelistedCommandResult } from "./orionCommandResults";
 import { assistantActivityLine, composerSendState } from "./orionAssistantActivity";
+import {
+  createOrionActivityRun,
+  markOrionActivityActionDone,
+  markOrionActivityActionFailed,
+  markOrionActivityActionRunning,
+  orionActivityStepStatusLabel,
+  shouldShowOrionActivityFloat,
+  type OrionActivityRun,
+} from "./orionActivityRun";
 
 type ProjectProfile = {
   detected_stack: string[];
@@ -257,6 +266,7 @@ function App() {
   const [clarificationGate, setClarificationGate] = useState<ClarificationGate | null>(null);
   const [orionPendingPlan, setOrionPendingPlan] = useState<OrionPendingPlan | null>(null);
   const [orionPendingAssistant, setOrionPendingAssistant] = useState<OrionPendingAssistant | null>(null);
+  const [orionActivityRun, setOrionActivityRun] = useState<OrionActivityRun | null>(null);
   const [orionAssistantActionCount, setOrionAssistantActionCount] = useState(0);
   const [orionSuggestions, setOrionSuggestions] = useState<OrionSuggestedAction[]>([]);
   const [currentActivity, setCurrentActivity] = useState("");
@@ -799,6 +809,7 @@ function App() {
     setApprovalGate(null);
     setApprovalNote("");
     setCurrentActivity("");
+    setOrionActivityRun(null);
     setPendingAttachments([]);
     setComposerDragActive(false);
     setError("");
@@ -1066,6 +1077,7 @@ function App() {
   function createOrionAssistantConversation(task: string, options: { userLine: string; routeReason: string }) {
     const response = createOrionAssistantResponse(task);
     setOrionPendingPlan(null);
+    setOrionActivityRun(createOrionActivityRun(task, response.actions));
     setInspectorView("output");
     const needsConfirmation = response.actions.some((action) => action.risk !== "direct");
     if (needsConfirmation) {
@@ -1216,8 +1228,10 @@ function App() {
     setOrionAssistantActionCount(pending.actions.length);
     try {
       for (const action of pending.actions) {
+        setOrionActivityRun((run) => run ? markOrionActivityActionRunning(run, action.id) : run);
         try {
           const result = await executeOrionAssistantAction(action);
+          setOrionActivityRun((run) => run ? markOrionActivityActionDone(run, action.id, result.message) : run);
           setChatLines((lines) => [...lines, `ORION：${result.message}`]);
           setLogLines((lines) => [...lines, `ORION assistant action done: ${action.kind}`, result.message]);
           if (result.stop) {
@@ -1227,6 +1241,7 @@ function App() {
           }
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
+          setOrionActivityRun((run) => run ? markOrionActivityActionFailed(run, action.id, message) : run);
           setChatLines((lines) => [...lines, `ORION：动作执行失败：${message}`]);
           setLogLines((lines) => [...lines, `ORION assistant action failed: ${action.kind}`, message]);
           break;
@@ -1329,6 +1344,33 @@ function App() {
       return {
         message: formatWhitelistedCommandResult(result),
         stop: shouldStopAfterCommandResult(result),
+      };
+    }
+    if (action.kind === "command.runWorktreeSandbox") {
+      if (!canUseTauriCommands()) {
+        throw new Error("worktree 沙箱需要在 Tauri 客户端中执行；浏览器预览不可用。");
+      }
+      const program = typeof action.payload.program === "string" ? action.payload.program : "";
+      const args = Array.isArray(action.payload.args) ? action.payload.args.filter((item): item is string => typeof item === "string") : [];
+      if (!program) {
+        return { message: "这个沙箱命令还没有解析出可执行程序，已停止。", stop: true };
+      }
+      const projectRoot = typeof action.payload.cwd === "string" && action.payload.cwd.trim() ? action.payload.cwd : projectPath;
+      const result = await invoke<SandboxCommandResult>("orion_run_sandboxed_command", {
+        input: { project_root: projectRoot, program, args, timeout_secs: 120 },
+      });
+      return {
+        message: formatSandboxCommandResult(result),
+        stop: shouldStopAfterCommandResult(result),
+      };
+    }
+    if (action.kind === "command.reviewSandbox") {
+      const program = typeof action.payload.program === "string" ? action.payload.program : "";
+      const args = Array.isArray(action.payload.args) ? action.payload.args.filter((item): item is string => typeof item === "string") : [];
+      const cwd = typeof action.payload.cwd === "string" && action.payload.cwd.trim() ? action.payload.cwd : projectPath;
+      return {
+        message: `已生成沙箱命令审核草案：${program} ${args.join(" ")}（cwd: ${cwd}）。当前版本不会直接执行非白名单命令；接入沙箱 runner 后可在人工确认下运行。`,
+        stop: true,
       };
     }
     if (action.kind === "memory.search") {
@@ -1789,6 +1831,36 @@ function App() {
     </article>;
   }
 
+  function renderOrionActivityRun(run: OrionActivityRun) {
+    const doneCount = run.steps.filter((step) => step.status === "done").length;
+    const statusLabel = run.status === "running" ? "执行中" : run.status === "failed" ? "失败" : run.status === "done" ? "完成" : "待执行";
+    return <article className={`orion-activity-run ${run.status}`}>
+      <header><div><strong>ORION 临时任务</strong><span>{run.task}</span></div><em>{statusLabel} · {doneCount}/{run.steps.length}</em></header>
+      <div className="orion-activity-steps">
+        {run.steps.map((step) => <section className={`orion-activity-step ${step.status}`} key={step.id}>
+          <span aria-hidden="true">{step.status === "done" ? "✓" : step.status === "failed" ? "!" : step.status === "running" ? "●" : ""}</span>
+          <div><strong>{step.title}</strong><p>{step.detail}</p></div>
+        </section>)}
+      </div>
+    </article>;
+  }
+
+  function renderOrionActivityFloat(run: OrionActivityRun) {
+    const doneCount = run.steps.filter((step) => step.status === "done").length;
+    return <>
+      <header>
+        <div><strong>任务进度</strong><span>ORION 临时任务</span></div>
+        <em>{doneCount}/{run.steps.length}</em>
+      </header>
+      <div className="workflow-progress-list">
+        {run.steps.map((step) => <article className={`workflow-progress-step ${step.status}`} key={step.id}>
+          <span className="workflow-progress-icon" aria-hidden="true">{step.status === "done" ? "✓" : step.status === "failed" ? "!" : ""}</span>
+          <div><strong>{step.title}</strong><small>{orionActivityStepStatusLabel(step.status)}</small></div>
+        </article>)}
+      </div>
+    </>;
+  }
+
   function orionNodeInstructionContext(step: WorkflowStep) {
     if (!step.orion_notes?.length) return "";
     return `\n\n[ORION 转交给 ${step.owner} / ${step.stage} 的补充指令]\n${step.orion_notes.map((note) => `- ${note}`).join("\n")}`;
@@ -1802,6 +1874,16 @@ function App() {
     && !orionPendingPlan
     && !orionPendingAssistant
     && !pendingMemoryCandidate;
+  const shouldShowActivityFloat = shouldShowOrionActivityFloat({
+    run: orionActivityRun,
+    inspectorCollapsed,
+    workflowMetricCount: workflowMetrics.length,
+    hasApprovalGate: Boolean(approvalGate),
+    hasConfigPanel: Boolean(configPanel),
+    hasPendingPlan: Boolean(orionPendingPlan),
+    hasPendingAssistant: Boolean(orionPendingAssistant),
+    hasPendingMemoryCandidate: Boolean(pendingMemoryCandidate),
+  });
 
   return (
     <main className={shellClassName} onClick={() => { setContextMenu(null); setWorkflowMenuOpen(false); }}>
@@ -1875,6 +1957,9 @@ function App() {
               <div><strong>{step.owner} / {step.stage}</strong><small>{step.status === "running" ? currentActivity || "正在运行" : step.status === "done" ? formatDuration(step.elapsed_ms) : step.status === "failed" ? "已停止" : "等待中"}</small></div>
             </article>)}
           </div>
+        </aside>}
+        {shouldShowActivityFloat && orionActivityRun && <aside className="workflow-progress-float orion-activity-float" aria-label="ORION 临时任务轨迹">
+          {renderOrionActivityFloat(orionActivityRun)}
         </aside>}
         <form
           className={`composer${composerDragActive ? " drag-active" : ""}`}
@@ -1965,6 +2050,7 @@ function App() {
           </div>
           {orionPendingPlan && renderOrionWorkflowPreview(orionPendingPlan)}
           {orionPendingAssistant && renderOrionAssistantPreview(orionPendingAssistant)}
+          {!orionPendingPlan && !orionPendingAssistant && workflowMetrics.length === 0 && orionActivityRun && renderOrionActivityRun(orionActivityRun)}
           {orionSuggestions.length > 0 && <details className="orion-suggestions" open>
             <summary><strong>ORION 运行建议</strong><span>{orionSuggestions.length} 条</span></summary>
             {orionSuggestions.map((suggestion) => <section className={`orion-suggestion ${suggestion.kind}`} key={suggestion.id}>
