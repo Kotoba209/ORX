@@ -9,6 +9,7 @@ const PROVIDER_TEST_TIMEOUT_SECS: u64 = 45;
 const AGENT_RUN_TIMEOUT_SECS: u64 = 240;
 const API_PROTOCOL_RESPONSES: &str = "responses";
 const API_PROTOCOL_ANTHROPIC_MESSAGES: &str = "anthropic-messages";
+const API_PROTOCOL_CUSTOM_DIRECT: &str = "custom-direct";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProviderConfig {
@@ -334,6 +335,11 @@ fn build_provider_payload_with_limit(protocol: &str, model: &str, prompt: &str, 
             "messages": [{ "role": "user", "content": prompt }],
             "max_tokens": max_tokens
         })),
+        API_PROTOCOL_CUSTOM_DIRECT => Ok(serde_json::json!({
+            "model": model,
+            "messages": [{ "role": "user", "content": prompt }],
+            "max_tokens": max_tokens
+        })),
         _ => {
             let mut payload = build_responses_payload(model, prompt, upstream)?;
             if let Some(object) = payload.as_object_mut() {
@@ -412,7 +418,7 @@ fn validate_provider(input: &ProviderConfigInput) -> Result<(), String> {
     if !["openai-compatible", "anthropic", "anthropic-compatible", "gemini", "deepseek", "mock"].contains(&input.kind.trim()) {
         return Err("Provider 类型不支持".to_string());
     }
-    if ![API_PROTOCOL_RESPONSES, API_PROTOCOL_ANTHROPIC_MESSAGES].contains(&normalized_api_protocol(&input.api_protocol)) {
+    if ![API_PROTOCOL_RESPONSES, API_PROTOCOL_ANTHROPIC_MESSAGES, API_PROTOCOL_CUSTOM_DIRECT].contains(&normalized_api_protocol(&input.api_protocol)) {
         return Err("API 协议不支持".to_string());
     }
     if input.base_url.trim().is_empty() {
@@ -434,6 +440,7 @@ fn provider_responses_endpoint(base_url: &str) -> String {
 fn provider_endpoint(base_url: &str, protocol: &str) -> String {
     match normalized_api_protocol(protocol) {
         API_PROTOCOL_ANTHROPIC_MESSAGES => format!("{}/v1/messages", base_url.trim_end_matches('/')),
+        API_PROTOCOL_CUSTOM_DIRECT => base_url.trim_end_matches('/').to_string(),
         _ => provider_responses_endpoint(base_url),
     }
 }
@@ -457,7 +464,7 @@ fn apply_provider_auth(request: reqwest::blocking::RequestBuilder, protocol: &st
 fn build_agent_prompt(owner: &str, stage: &str, task: &str, upstream: &str) -> String {
     let role_context = role_context_for_owner(owner);
     let file_artifact_rule = if owner.contains("DEV") || owner.contains("开发") {
-        "\n\n文件产物规则：如果当前任务或上游附件内容要求生成代码文件、HTML、CSS、JS、脚本或配置，你必须直接输出可落盘的完整文件内容，不能只拆解任务或只给实施建议。请在产物中输出 Markdown 代码块，并在代码块第一行写明文件名，例如 `<!-- FILE: form.html -->`、`<!-- FILE: index.html -->`、`// FILE: src/app.ts` 或 `# FILE: scripts/test.py`。ORCH 会把这些代码块保存到任务档案的 generated/ 目录；没有实际非空代码块会被视为 DEV 节点失败并打回。"
+        "\n\n文件产物规则：如果当前任务或上游附件内容要求生成代码文件、HTML、CSS、JS、脚本或配置，你必须直接输出可落盘的完整文件内容，不能只拆解任务或只给实施建议。请在产物中输出 Markdown 代码块，并在代码块第一行写明文件名，例如 `<!-- FILE: form.html -->`、`<!-- FILE: index.html -->`、`// FILE: src/app.ts` 或 `# FILE: scripts/test.py`。ORCH 会把这些代码块保存到任务档案的 generated/ 目录，并同步写入上游“代码产物同步路径”指定的当前项目根目录；没有实际非空代码块会被视为 DEV 节点失败并打回。"
     } else {
         ""
     };
@@ -770,6 +777,14 @@ mod tests {
     }
 
     #[test]
+    fn provider_endpoint_uses_custom_direct_base_url_without_appending_path() {
+        assert_eq!(
+            provider_endpoint("https://third-party.example.com/api/chat", "custom-direct"),
+            "https://third-party.example.com/api/chat"
+        );
+    }
+
+    #[test]
     fn extract_response_text_reads_responses_output_text() {
         let content = r#"{"output":[{"type":"message","content":[{"type":"output_text","text":"OK"}]}]}"#;
         assert_eq!(extract_response_text(content).unwrap(), "OK");
@@ -909,6 +924,7 @@ mod tests {
         assert!(prompt.contains("文件产物规则"));
         assert!(prompt.contains("FILE: index.html"));
         assert!(prompt.contains("generated/"));
+        assert!(prompt.contains("代码产物同步路径"));
     }
 
     #[test]
@@ -969,6 +985,24 @@ mod tests {
         let payload = build_provider_payload("anthropic-messages", "mimo-v2.5-pro", "请只回复 OK", "").unwrap();
 
         assert_eq!(payload.get("model").and_then(|value| value.as_str()), Some("mimo-v2.5-pro"));
+        assert_eq!(payload.get("max_tokens").and_then(|value| value.as_u64()), Some(4096));
+        assert!(payload.get("max_output_tokens").is_none());
+        assert_eq!(
+            payload
+                .get("messages")
+                .and_then(|value| value.as_array())
+                .and_then(|items| items.first())
+                .and_then(|item| item.get("content"))
+                .and_then(|value| value.as_str()),
+            Some("请只回复 OK")
+        );
+    }
+
+    #[test]
+    fn custom_direct_payload_uses_generic_messages_body() {
+        let payload = build_provider_payload("custom-direct", "third-party-model", "请只回复 OK", "").unwrap();
+
+        assert_eq!(payload.get("model").and_then(|value| value.as_str()), Some("third-party-model"));
         assert_eq!(payload.get("max_tokens").and_then(|value| value.as_u64()), Some(4096));
         assert!(payload.get("max_output_tokens").is_none());
         assert_eq!(

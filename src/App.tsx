@@ -5,8 +5,10 @@ import { open } from "@tauri-apps/plugin-dialog";
 import "./App.css";
 import {
   defaultSteps,
+  formatWorkflowStepCompletionCriteria,
   getApprovalPrompt,
   getRollbackIndex,
+  nextRuntimeAfterApproval,
   nextRuntimeAfterRejection,
   outputHasFileArtifact,
   parseApprovalInput,
@@ -21,7 +23,7 @@ import {
   createDefaultWorkflows,
   deleteWorkflow,
   duplicateWorkflow,
-  getDefaultWorkflow,
+  migrateWorkflowDefinition,
   setDefaultWorkflow,
   updateWorkflow,
   updateWorkflowSteps,
@@ -46,13 +48,131 @@ import {
 } from "./memoryRules";
 import { createPendingMemoryCandidate, updatePendingMemoryCandidate as applyMemoryCandidatePatch, type PendingMemoryCandidate } from "./memoryCandidates";
 import { applyOrionNodeInstruction, applyOrionPlanModification, parseOrionCommand, type OrionPlanModification } from "./orionCommands";
-import { classifyOrionIntent, createOrionActionPlan, createOrionAssistantResponse, draftOrionWorkflow } from "./orionPlanner";
+import { createOrionActionPlan, createOrionAssistantResponse } from "./orionPlanner";
 import { resolveOrionConversationRoute } from "./orionConversationRouter";
-import { groupOrionActionsByRisk, type OrionAction, type OrionRiskLevel } from "./orionActions";
-import { actionRiskSummary, formatOrionPayloadPreview, highestOrionRisk, orionRiskLabel } from "./orionPermission";
+import { createOrionAction, groupOrionActionsByRisk, type OrionAction, type OrionRiskLevel } from "./orionActions";
+import { actionRiskSummary, formatOrionToolPayloadPreview, highestOrionRisk, orionRiskLabel } from "./orionPermission";
 import { monitorOrionNodeResult, type OrionSuggestedAction } from "./orionRunMonitor";
 import { formatSandboxCommandResult, formatWhitelistedCommandResult, shouldStopAfterCommandResult, type SandboxCommandResult, type WhitelistedCommandResult } from "./orionCommandResults";
 import { assistantActivityLine, composerSendState } from "./orionAssistantActivity";
+import {
+  actionRequiresManualConfirmation,
+  formatOrionAccessModeContext,
+  getOrionAccessModeOption,
+  loadOrionAccessMode,
+  orionAccessModeOptions,
+  saveOrionAccessMode,
+  summarizeAccessModeRisk,
+  type OrionAccessMode,
+} from "./orionAccessMode";
+import { createOrionFollowUpReply } from "./orionFollowUp";
+import { createOrionChatRunInput, normalizeOrionChatOutput } from "./orionChat";
+import {
+  createOrionIntentRouterRunInput,
+  createOrionIntentClarificationQuestion,
+  formatOrionIntentRouteForMemory,
+  intentRouteIsActionable,
+  normalizeOrionIntentRouteDecision,
+  parseOrionIntentRouteDecision,
+  type OrionIntentRouteDecision,
+} from "./orionIntentRouter";
+import { createOrionModelPlannerRunInput, formatOrionModelDecisionForMemory, parseOrionModelDecision, type OrionModelDecision } from "./orionModelPlanner";
+import {
+  applyOrionWorkflowDriverDecision,
+  createOrionWorkflowDriverHandoff,
+  createOrionWorkflowDriverRunInput,
+  formatOrionWorkflowDriverDecisionForMemory,
+  parseOrionWorkflowDriverDecision,
+  type OrionWorkflowDriverDecision,
+} from "./orionWorkflowDriver";
+import {
+  createFallbackOrionWorkflowDraft,
+  createOrionWorkflowDraftRunInput,
+  formatOrionWorkflowDraftDecisionForMemory,
+  parseOrionWorkflowDraft,
+} from "./orionWorkflowDraft";
+import {
+  applyOrionWorkflowRevision,
+  createOrionWorkflowRevisionRunInput,
+  parseOrionWorkflowRevision,
+} from "./orionWorkflowRevision";
+import {
+  appendOrionObservationAnswerToUpstream,
+  appendOrionObservationRerunToUpstream,
+  appendOrionObservationToUpstream,
+  createFallbackOrionWorkflowObservation,
+  createOrionWorkflowObserverRunInput,
+  formatOrionObservationPrompt,
+  observationRequestsRerun,
+  observationRequiresUserInput,
+  parseOrionWorkflowObservation,
+  shouldRunFallbackOrionNodeMonitor,
+  shouldSurfaceOrionWorkflowObservation,
+  type OrionWorkflowObservation,
+} from "./orionWorkflowObserver";
+import { activityFloatShouldAutoExpand, activityFloatSummary, shouldCollapseActivityFloat } from "./activityFloat";
+import {
+  appendFreshOrionMemoryEntry,
+  appendOrionMemoryEntry,
+  createOrionAssistantAnswerMemoryEntry,
+  createOrionAssistantQuestionMemoryEntry,
+  createOrionAssistantSummaryMemoryEntry,
+  createOrionChatSummaryMemoryEntry,
+  createOrionDecisionMemoryEntry,
+  createOrionMemoryEntry,
+  createOrionUserAssistantEventMemoryEntry,
+  createOrionUserWorkflowEventMemoryEntry,
+  createOrionWorkflowNodeMemoryEntry,
+  createOrionWorkflowObservationMemoryEntry,
+  createOrionWorkflowRunMemoryEntry,
+  createOrionWorkflowSummaryMemoryEntry,
+  formatOrionFindingsMarkdown,
+  formatOrionMemoryContext,
+  formatOrionMemoryJson,
+  loadOrionMemoryEntries,
+  saveOrionMemoryEntries,
+  selectFreshOrionMemoryEntries,
+  type OrionMemoryEntry,
+} from "./orionMemory";
+import { createFallbackOrionWorkflowSummary, createOrionWorkflowSummaryRunInput, parseOrionWorkflowSummary, type OrionWorkflowRunStatus } from "./orionWorkflowSummary";
+import { createOrionWorkflowStartUpstream } from "./orionWorkflowContext";
+import { createOrionProcessFollowUpReply, extractRecentArtifactPaths, formatOrionProcessContext, shouldUseDirectOrionProcessFollowUpReply } from "./orionProcessContext";
+import {
+  appendOrionCapabilityGap,
+  createOrionCapabilityGap,
+  formatOrionCapabilityGapLine,
+  formatOrionCapabilityGapContext,
+  loadOrionCapabilityGaps,
+  saveOrionCapabilityGaps,
+  type OrionCapabilityGap,
+} from "./orionCapabilityGaps";
+import { createWorkflowNodeFailure, formatWorkflowNodeFailureForChat, type WorkflowNodeFailure } from "./workflowNodeFailure";
+import { formatOrionToolCatalogRows, validateOrionToolAction } from "./orionToolRegistry";
+import { createOrionAssistantContinuationTask, shouldContinueOrionAssistantLoop } from "./orionAssistantLoop";
+import { createOrionQuestionAnswerTask, createOrionResolvedTaskForOrch, findLatestWaitingOrionQuestion, shouldTreatAsOrionQuestionAnswer } from "./orionQuestionAnswer";
+import {
+  createConversationSession,
+  loadConversationStore,
+  removeConversationSessions,
+  saveConversationStore,
+  selectConversationOrionMemory,
+  updateConversationContent,
+  type ConversationSession,
+} from "./conversationStorage";
+import {
+  appendOrionSkill,
+  createOrionSkillFromResults,
+  formatOrionSkillContext,
+  formatOrionSkillLine,
+  loadOrionSkills,
+  matchRelevantOrionSkills,
+  orionSkillMaturity,
+  orionSkillMaturityLabel,
+  orionSkillTrainingEventLabel,
+  reinforceOrionSkill,
+  saveOrionSkills,
+  type OrionSkill,
+} from "./orionSkills";
 import {
   createOrionActivityRun,
   markOrionActivityActionDone,
@@ -62,6 +182,7 @@ import {
   shouldShowOrionActivityFloat,
   type OrionActivityRun,
 } from "./orionActivityRun";
+import { deriveOrionRuntimeStatus, runtimeStatusNeedsVisibleProgress } from "./orionRuntimeState";
 
 type ProjectProfile = {
   detected_stack: string[];
@@ -75,7 +196,7 @@ type ProjectProfile = {
 type ProjectSummary = { root: string; files: ProjectFile[]; source_count: number; test_count: number; important_files: string[]; context_brief: string; project_profile?: ProjectProfile };
 type RegisteredProject = { id: string; name: string; path: string; source_count: number; test_count: number; context_brief: string; updated_at: number };
 type AddProjectResult = { project: RegisteredProject; summary: ProjectSummary };
-type ProviderApiProtocol = "responses" | "anthropic-messages";
+type ProviderApiProtocol = "responses" | "anthropic-messages" | "custom-direct";
 type ProviderConfig = { id: string; name: string; kind: string; api_protocol: ProviderApiProtocol; base_url: string; use_proxy_route: boolean; proxy_url: string; model: string; api_key_ref: string };
 type ProviderConnectionResult = { ok: boolean; status: number; endpoint: string; message: string };
 type AgentRunResult = { owner: string; stage: string; endpoint: string; output: string; elapsed_ms: number; input_tokens: number; output_tokens: number; total_tokens: number };
@@ -88,6 +209,7 @@ type ProjectSearchMatch = { path: string; line_number: number; line: string };
 type ProjectSearchResult = { query: string; project_root: string; matches: ProjectSearchMatch[] };
 type WebSearchHit = { title: string; url: string; snippet: string; content_preview: string };
 type WebSearchResult = { query: string; results: WebSearchHit[] };
+type WebFetchResult = { url: string; final_url: string; status: number; content_type: string; headers: Array<[string, string]>; bytes: number; html: string; text_preview: string; insecure_tls?: boolean };
 type GeneratedArtifactWriteResult = { path: string; bytes: number };
 type MemoryRuleSnapshot = { rules: MemoryRule[] };
 type PendingAttachment = { id: string; path?: string; name: string; kind: string; bytes: number; inlineBytes?: number[] };
@@ -96,12 +218,13 @@ type TaskAttachmentSaveResult = { task_id: string; attachments: TaskAttachmentRe
 type InlineAttachmentInput = { original_name: string; bytes: number[] };
 type WorkflowMetric = { stage: string; owner: string; status: "running" | "done" | "failed"; elapsed_ms: number; input_tokens: number; output_tokens: number; total_tokens: number; output_preview: string };
 type TaskArchiveRef = { id: string; path: string };
-type WorkflowRuntime = { task: string; enabledSteps: WorkflowStep[]; nextIndex: number; upstream: string; archive: TaskArchiveRef | null; workflowStart: number; runTotals: { elapsed_ms: number; input_tokens: number; output_tokens: number; total_tokens: number }; artifactRetries?: Record<string, number>; skipNodeApprovals?: boolean };
+type WorkflowRuntime = { task: string; enabledSteps: WorkflowStep[]; nextIndex: number; upstream: string; archive: TaskArchiveRef | null; workflowStart: number; runTotals: { elapsed_ms: number; input_tokens: number; output_tokens: number; total_tokens: number }; artifactRetries?: Record<string, number>; observationRetries?: Record<string, number>; skipNodeApprovals?: boolean };
 type ApprovalGate = { step: WorkflowStep; stepIndex: number; result: AgentRunResult; runtime: WorkflowRuntime; preview: string; upstreamBefore: string };
 type ClarificationGate = { step: WorkflowStep; stepIndex: number; result: AgentRunResult; runtime: WorkflowRuntime; prompt: string };
+type OrionObservationGate = { step: WorkflowStep; stepIndex: number; runtime: WorkflowRuntime; observation: OrionWorkflowObservation };
 type OrionPendingPlan = { task: string; workflow: WorkflowDefinition; actions: OrionAction[] };
-type OrionPendingAssistant = { task: string; message: string; actions: OrionAction[] };
-type WorkflowRunOptions = { skipNodeApprovals?: boolean; initiatedBy?: "direct" | "orion-existing-workflow" | "orion-custom-workflow"; routeReason?: string };
+type OrionPendingAssistant = { task: string; message: string; actions: OrionAction[]; traceId: string; matchedSkillIds?: string[]; continuationRound?: number };
+type WorkflowRunOptions = { skipNodeApprovals?: boolean; initiatedBy?: "direct" | "orion-existing-workflow" | "orion-custom-workflow"; routeReason?: string; echoUserTask?: boolean };
 type InspectorView = "output" | "context" | "files";
 type ConfigPanel = "provider" | "workflow" | "settings" | null;
 type ContextMenuState =
@@ -111,8 +234,6 @@ type ContextMenuState =
   | { kind: "conversation"; x: number; y: number; conversation: ConversationSession }
   | { kind: "workflow"; x: number; y: number; workflow: WorkflowDefinition }
   | null;
-type ConversationSession = { id: string; projectId: string; title: string; updatedAt: number };
-
 const roleLabels: Record<string, string> = {
   administrator: "PM",
   product: "PD",
@@ -138,6 +259,7 @@ const approvalLabels: Record<NonNullable<WorkflowStep["approval"]>, string> = {
 const providerProtocolLabels: Record<ProviderApiProtocol, string> = {
   responses: "OpenAI Responses",
   "anthropic-messages": "Anthropic Messages",
+  "custom-direct": "自定义直连",
 };
 
 const defaultProjectPath = "D:\\CodexProjects\\workflow-manager-mvp";
@@ -160,18 +282,16 @@ function createProviderDraft(index: number): ProviderConfig {
 
 function loadWorkflowPreferences() {
   const fallback = createDefaultWorkflows();
-  const fallbackId = getDefaultWorkflow(fallback)?.id ?? fallback[0]?.id ?? "";
-  if (typeof window === "undefined") return { workflows: fallback, activeWorkflowId: fallbackId };
+  if (typeof window === "undefined") return { workflows: fallback, activeWorkflowId: "" };
   try {
     const raw = window.localStorage.getItem(workflowStorageKey);
-    if (!raw) return { workflows: fallback, activeWorkflowId: fallbackId };
+    if (!raw) return { workflows: fallback, activeWorkflowId: "" };
     const parsed = JSON.parse(raw) as { workflows?: WorkflowDefinition[]; activeWorkflowId?: string };
-    const savedWorkflows = Array.isArray(parsed.workflows) && parsed.workflows.length > 0 ? parsed.workflows : fallback;
-    const defaultId = getDefaultWorkflow(savedWorkflows)?.id ?? savedWorkflows[0]?.id ?? "";
-    const activeWorkflowId = savedWorkflows.some((workflow) => workflow.id === parsed.activeWorkflowId) ? parsed.activeWorkflowId ?? defaultId : defaultId;
+    const savedWorkflows = Array.isArray(parsed.workflows) && parsed.workflows.length > 0 ? parsed.workflows.map(migrateWorkflowDefinition) : fallback;
+    const activeWorkflowId = parsed.activeWorkflowId && savedWorkflows.some((workflow) => workflow.id === parsed.activeWorkflowId) ? parsed.activeWorkflowId : "";
     return { workflows: savedWorkflows, activeWorkflowId };
   } catch {
-    return { workflows: fallback, activeWorkflowId: fallbackId };
+    return { workflows: fallback, activeWorkflowId: "" };
   }
 }
 
@@ -213,9 +333,28 @@ function formatWebSearchResult(result: WebSearchResult) {
   return `联网查询「${result.query}」读取到 ${result.results.length} 条结果：${preview}`;
 }
 
+function formatWebFetchResult(result: WebFetchResult) {
+  const headers = result.headers.length > 0
+    ? result.headers.slice(0, 16).map(([name, value]) => `${name}: ${value}`).join("；")
+    : "未请求响应头";
+  const htmlPreview = result.html ? `\nHTML 片段：${previewOutput(result.html)}` : "";
+  return [
+    `已读取网页：${result.final_url}`,
+    result.insecure_tls ? "安全提示：本次已忽略 HTTPS 证书校验，页面内容可能被中间人篡改，仅建议用于临时排查。" : "",
+    `状态：${result.status}；类型：${result.content_type || "未知"}；大小：${result.bytes} bytes`,
+    `响应头：${headers}`,
+    `正文摘要：${result.text_preview || "无可读正文摘要"}`,
+    htmlPreview,
+  ].filter(Boolean).join("\n");
+}
+
 function previewOutput(output: string) {
   const compact = output.replace(/\s+/g, " ").trim();
   return compact.length > 260 ? `${compact.slice(0, 260)}...` : compact;
+}
+
+function extractUrlFromText(text: string) {
+  return text.match(/https?:\/\/[^\s"'，。！？、）)]+|www\.[^\s"'，。！？、）)]+/i)?.[0] ?? "";
 }
 
 function workflowApprovalSummary(steps: WorkflowStep[]) {
@@ -251,24 +390,43 @@ function App() {
   const [pendingMemoryCandidate, setPendingMemoryCandidate] = useState<PendingMemoryCandidate | null>(null);
   const [testingProvider, setTestingProvider] = useState(false);
   const [savingConfig, setSavingConfig] = useState(false);
-  const [activeConversationId, setActiveConversationId] = useState("");
-  const [conversations, setConversations] = useState<ConversationSession[]>([]);
+  const [initialConversationStore] = useState(() => loadConversationStore(typeof window === "undefined" ? null : window.localStorage));
+  const initialConversation = initialConversationStore.conversations.find((conversation) => conversation.id === initialConversationStore.activeConversationId);
+  const [activeConversationId, setActiveConversationId] = useState(initialConversationStore.activeConversationId);
+  const [conversations, setConversations] = useState<ConversationSession[]>(initialConversationStore.conversations);
   const [workflowMenuOpen, setWorkflowMenuOpen] = useState(false);
+  const [accessModeMenuOpen, setAccessModeMenuOpen] = useState(false);
   const [workflowRunning, setWorkflowRunning] = useState(false);
   const workflowStopRequestedRef = useRef(false);
   const lastStoppedWorkflowRef = useRef({ task: "", at: 0 });
-  const [chatLines, setChatLines] = useState<string[]>(["ORCH：等待任务。"]);
-  const [logLines, setLogLines] = useState<string[]>(["codex-workflow-client started", "等待添加本地项目。"]); 
+  const [chatLines, setChatLines] = useState<string[]>(initialConversation?.chatLines ?? ["ORCH：等待任务。"]);
+  const [logLines, setLogLines] = useState<string[]>(initialConversation?.logLines ?? ["codex-workflow-client started", "等待添加本地项目。"]); 
   const [workflowMetrics, setWorkflowMetrics] = useState<WorkflowMetric[]>([]);
   const [workflowStartedAt, setWorkflowStartedAt] = useState<number | null>(null);
   const [taskArchive, setTaskArchive] = useState<TaskArchiveRef | null>(null);
   const [approvalGate, setApprovalGate] = useState<ApprovalGate | null>(null);
   const [clarificationGate, setClarificationGate] = useState<ClarificationGate | null>(null);
+  const [orionObservationGate, setOrionObservationGate] = useState<OrionObservationGate | null>(null);
   const [orionPendingPlan, setOrionPendingPlan] = useState<OrionPendingPlan | null>(null);
   const [orionPendingAssistant, setOrionPendingAssistant] = useState<OrionPendingAssistant | null>(null);
   const [orionActivityRun, setOrionActivityRun] = useState<OrionActivityRun | null>(null);
   const [orionAssistantActionCount, setOrionAssistantActionCount] = useState(0);
+  const [orionChatRunning, setOrionChatRunning] = useState(false);
   const [orionSuggestions, setOrionSuggestions] = useState<OrionSuggestedAction[]>([]);
+  const [orionMemoryEntries, setOrionMemoryEntries] = useState<OrionMemoryEntry[]>(() => selectConversationOrionMemory(
+    initialConversation,
+    loadOrionMemoryEntries(typeof window === "undefined" ? null : window.localStorage),
+  ));
+  const [orionCapabilityGaps, setOrionCapabilityGaps] = useState<OrionCapabilityGap[]>([]);
+  const [workflowNodeFailure, setWorkflowNodeFailure] = useState<WorkflowNodeFailure | null>(null);
+  const [orionSkills, setOrionSkills] = useState<OrionSkill[]>([]);
+  const [orionAccessMode, setOrionAccessMode] = useState<OrionAccessMode>("default");
+  const [activityFloatExpanded, setActivityFloatExpanded] = useState(true);
+  const [activityFloatChangedAt, setActivityFloatChangedAt] = useState(Date.now());
+  const activityFloatSignatureRef = useRef("");
+  const orionMemoryEntriesRef = useRef<OrionMemoryEntry[]>([]);
+  const orionSkillsRef = useRef<OrionSkill[]>([]);
+  const orionMatchedSkillIdsRef = useRef<string[]>([]);
   const [currentActivity, setCurrentActivity] = useState("");
   const [approvalNote, setApprovalNote] = useState("");
   const [workspaceFiles, setWorkspaceFiles] = useState<ProjectFile[]>([]);
@@ -278,10 +436,11 @@ function App() {
   const [expandedProjectIds, setExpandedProjectIds] = useState<Set<string>>(() => new Set());
   const [contextMenu, setContextMenu] = useState<ContextMenuState>(null);
   const [error, setError] = useState("");
+  const [copiedMessageKey, setCopiedMessageKey] = useState("");
 
   const fileTree = useMemo(() => buildFileTree(summary?.files ?? []), [summary]);
   const workspaceFilePaths = useMemo(() => new Set(workspaceFiles.map((file) => file.path)), [workspaceFiles]);
-  const activeWorkflow = useMemo(() => workflows.find((workflow) => workflow.id === activeWorkflowId) ?? getDefaultWorkflow(workflows), [workflows, activeWorkflowId]);
+  const activeWorkflow = useMemo(() => workflows.find((workflow) => workflow.id === activeWorkflowId), [workflows, activeWorkflowId]);
   const steps = activeWorkflow?.steps ?? [];
   const stageOptions = useMemo(() => createWorkflowStageOptions(steps), [steps]);
   const latestOutput = logLines.slice(-28);
@@ -290,8 +449,9 @@ function App() {
   const composerButtonState = composerSendState({
     workflowRunning,
     assistantRunning: orionAssistantRunning,
+    chatRunning: orionChatRunning,
     approvalGate: Boolean(approvalGate),
-    clarificationGate: Boolean(clarificationGate),
+    clarificationGate: Boolean(clarificationGate || orionObservationGate),
   });
   const workflowTotals = useMemo(() => {
     const finished = workflowMetrics.filter((metric) => metric.status === "done");
@@ -315,16 +475,88 @@ function App() {
         preview: metric?.output_preview ?? step.instruction,
       };
     }), [steps, workflowMetrics]);
+  const workflowDoneCount = workflowProgressSteps.filter((step) => step.status === "done").length;
+  const workflowProgressTotal = workflowProgressSteps.length;
+  const orionActivityDoneCount = orionActivityRun?.steps.filter((step) => step.status === "done").length ?? 0;
+  const orionActivityTotal = orionActivityRun?.steps.length ?? 0;
+  const orionToolCatalogRows = useMemo(() => formatOrionToolCatalogRows(), []);
+  const accessModeOption = getOrionAccessModeOption(orionAccessMode);
+  const orionRuntimeStatus = deriveOrionRuntimeStatus({
+    workflowRunning,
+    assistantRunning: orionAssistantRunning,
+    activityRunning: orionActivityRun?.status === "running",
+    waitingForUser: Boolean(approvalGate || clarificationGate || orionObservationGate || orionPendingPlan),
+    failed: Boolean(orionActivityRun?.status === "failed" || workflowMetrics.some((metric) => metric.status === "failed")),
+  });
+  const activityFloatActive = runtimeStatusNeedsVisibleProgress(orionRuntimeStatus);
+  const activityFloatSignature = workflowMetrics.length > 0 || orionActivityRun
+    ? [
+      workflowMetrics.map((metric) => `${metric.owner}:${metric.stage}:${metric.status}`).join("|"),
+      orionActivityRun ? `${orionActivityRun.id}:${orionActivityRun.status}:${orionActivityRun.steps.map((step) => step.status).join("|")}` : "",
+    ].join("::")
+    : "";
 
-  useEffect(() => { void loadProjects(); void loadProviderConfig(); void loadAppSettings(); void loadWorkflowConfig(); void loadMemoryRules(); }, []);
   useEffect(() => {
-    if (!workflows.some((workflow) => workflow.id === activeWorkflowId)) {
-      setActiveWorkflowId(getDefaultWorkflow(workflows)?.id ?? workflows[0]?.id ?? "");
+    void loadProjects();
+    void loadProviderConfig();
+    void loadAppSettings();
+    void loadWorkflowConfig();
+    void loadMemoryRules();
+    setOrionCapabilityGaps(loadOrionCapabilityGaps(window.localStorage));
+    setOrionSkills(loadOrionSkills(window.localStorage));
+    setOrionAccessMode(loadOrionAccessMode(window.localStorage));
+  }, []);
+  useEffect(() => {
+    if (activeWorkflowId && !workflows.some((workflow) => workflow.id === activeWorkflowId)) {
+      setActiveWorkflowId("");
     }
   }, [workflows, activeWorkflowId]);
   useEffect(() => {
     window.localStorage.setItem(workflowStorageKey, JSON.stringify({ workflows, activeWorkflowId }));
   }, [workflows, activeWorkflowId]);
+  useEffect(() => {
+    orionMemoryEntriesRef.current = orionMemoryEntries;
+    saveOrionMemoryEntries(window.localStorage, orionMemoryEntries);
+  }, [orionMemoryEntries]);
+  useEffect(() => {
+    saveOrionCapabilityGaps(window.localStorage, orionCapabilityGaps);
+  }, [orionCapabilityGaps]);
+  useEffect(() => {
+    orionSkillsRef.current = orionSkills;
+    saveOrionSkills(window.localStorage, orionSkills);
+  }, [orionSkills]);
+  useEffect(() => {
+    saveOrionAccessMode(window.localStorage, orionAccessMode);
+  }, [orionAccessMode]);
+  useEffect(() => {
+    setConversations((items) => updateConversationContent(items, activeConversationId, chatLines, logLines, { orionMemoryEntries }));
+  }, [activeConversationId, chatLines, logLines, orionMemoryEntries]);
+  useEffect(() => {
+    saveConversationStore(window.localStorage, { activeConversationId, conversations });
+  }, [activeConversationId, conversations]);
+  useEffect(() => {
+    if (!activityFloatSignature) return;
+    const previousSignature = activityFloatSignatureRef.current;
+    activityFloatSignatureRef.current = activityFloatSignature;
+    if (activityFloatShouldAutoExpand({
+      previousSignature,
+      nextSignature: activityFloatSignature,
+      hasTaskActivity: workflowMetrics.length > 0 || Boolean(orionActivityRun && orionActivityRun.status !== "done"),
+    })) {
+      setActivityFloatExpanded(true);
+      setActivityFloatChangedAt(Date.now());
+    }
+  }, [activityFloatSignature, workflowMetrics.length, orionActivityRun]);
+  useEffect(() => {
+    if (!activityFloatSignature || activityFloatActive) return;
+    const changedAt = activityFloatChangedAt;
+    const timer = window.setTimeout(() => {
+      if (shouldCollapseActivityFloat({ activityActive: false, lastChangedAt: changedAt, now: Date.now(), delayMs: 3200 })) {
+        setActivityFloatExpanded(false);
+      }
+    }, 3400);
+    return () => window.clearTimeout(timer);
+  }, [activityFloatSignature, activityFloatActive, activityFloatChangedAt]);
   useEffect(() => {
     setWorkspaceFiles([]);
     setExpandedPaths(new Set());
@@ -362,7 +594,7 @@ function App() {
       const snapshot = await invoke<WorkflowConfigSnapshot | null>("get_workflow_config");
       if (!snapshot || snapshot.workflows.length === 0) return;
       setWorkflows(snapshot.workflows);
-      setActiveWorkflowId(snapshot.workflows.some((workflow) => workflow.id === snapshot.active_workflow_id) ? snapshot.active_workflow_id : getDefaultWorkflow(snapshot.workflows)?.id ?? snapshot.workflows[0]?.id ?? "");
+      setActiveWorkflowId(snapshot.active_workflow_id && snapshot.workflows.some((workflow) => workflow.id === snapshot.active_workflow_id) ? snapshot.active_workflow_id : "");
       setLogLines((lines) => [...lines, `已加载 ${snapshot.workflows.length} 个本地工作流配置。`]);
     } catch {
       setLogLines((lines) => [...lines, "浏览器预览模式：工作流配置使用本地浏览器缓存；客户端会写入 workflows.json。"]);
@@ -668,6 +900,7 @@ function App() {
   function providerEndpoint(provider: ProviderConfig) {
     const baseUrl = provider.base_url.trim().replace(/\/$/, "");
     if (provider.api_protocol === "anthropic-messages") return `${baseUrl}/v1/messages`;
+    if (provider.api_protocol === "custom-direct") return baseUrl;
     return `${baseUrl}/responses`;
   }
 
@@ -800,9 +1033,7 @@ function App() {
     }
   }
 
-  function resetConversationState(title = "新对话") {
-    setChatLines([`ORCH：${title} 已就绪。`]);
-    setLogLines(["codex-workflow-client started", `conversation: ${title}`]);
+  function resetConversationRuntimeState() {
     setWorkflowMetrics([]);
     setWorkflowStartedAt(null);
     setTaskArchive(null);
@@ -810,26 +1041,45 @@ function App() {
     setApprovalNote("");
     setCurrentActivity("");
     setOrionActivityRun(null);
+    setWorkflowNodeFailure(null);
     setPendingAttachments([]);
     setComposerDragActive(false);
     setError("");
   }
 
+  function replaceOrionConversationMemory(entries: OrionMemoryEntry[]) {
+    orionMemoryEntriesRef.current = entries;
+    setOrionMemoryEntries(entries);
+  }
+
+  function resetConversationState(title = "新对话") {
+    setChatLines([`ORCH：${title} 已就绪。`]);
+    setLogLines(["codex-workflow-client started", `conversation: ${title}`]);
+    replaceOrionConversationMemory([]);
+    resetConversationRuntimeState();
+  }
+
   function createConversation(projectId = "workspace", title = "新任务对话") {
-    const id = `chat-${Date.now()}`;
-    setConversations((items) => [{ id, projectId, title, updatedAt: Date.now() }, ...items]);
-    setActiveConversationId(id);
+    const conversation = createConversationSession(projectId, title);
+    setConversations((items) => [conversation, ...items]);
+    setActiveConversationId(conversation.id);
+    setChatLines(conversation.chatLines);
+    setLogLines(conversation.logLines);
+    replaceOrionConversationMemory(conversation.orionMemoryEntries);
     setContextMenu(null);
-    resetConversationState(title);
+    resetConversationRuntimeState();
   }
 
   function selectConversation(conversation: ConversationSession) {
     setActiveConversationId(conversation.id);
-    resetConversationState(conversation.title);
+    setChatLines(conversation.chatLines);
+    setLogLines(conversation.logLines);
+    replaceOrionConversationMemory(conversation.orionMemoryEntries);
+    resetConversationRuntimeState();
   }
 
   function deleteConversation(conversation: ConversationSession) {
-    setConversations((items) => items.filter((item) => item.id !== conversation.id));
+    setConversations((items) => removeConversationSessions(items, (item) => item.id === conversation.id));
     if (activeConversationId === conversation.id) {
       setActiveConversationId("");
       resetConversationState("等待任务");
@@ -842,7 +1092,11 @@ function App() {
     try {
       const nextProjects = await invoke<RegisteredProject[]>("remove_project", { projectId: project.id });
       setProjects(nextProjects);
-      setConversations((items) => items.filter((item) => item.projectId !== project.id));
+      setConversations((items) => removeConversationSessions(items, (conversation) => conversation.projectId === project.id));
+      if (conversations.some((conversation) => conversation.id === activeConversationId && conversation.projectId === project.id)) {
+        setActiveConversationId("");
+        resetConversationState("等待任务");
+      }
       setExpandedProjectIds((current) => {
         const next = new Set(current);
         next.delete(project.id);
@@ -867,7 +1121,7 @@ function App() {
   async function tryStartTaskArchive(task: string) {
     try {
       const archive = await invoke<TaskArchiveRef>("start_task_archive", {
-        input: { task, project_path: projectPath, workflow_template: activeWorkflow?.name ?? "默认工作流" },
+        input: { task, project_path: projectPath, workflow_template: activeWorkflow?.name ?? "ORION 自动判断" },
       });
       setTaskArchive(archive);
       setLogLines((lines) => [...lines, `task archive: ${archive.path}`]);
@@ -957,10 +1211,11 @@ function App() {
     setApprovalNote("");
     setError("");
     await tryRecordApproval(gate.runtime.archive, gate, "approved", approvalText);
+    await rememberOrionUserWorkflowEvent(gate.runtime.task, "approval.approved", approvalText, gate.step.owner, gate.step.stage, gate.runtime.archive);
     setApprovalGate(null);
-    setChatLines((lines) => [...lines, `你：同意${note.trim() ? `，${note.trim()}` : ""}`, `ORCH：审批通过，继续推进 ${gate.runtime.nextIndex < gate.runtime.enabledSteps.length ? gate.runtime.enabledSteps[gate.runtime.nextIndex].stage : "后续"} 节点。`]);
+    setChatLines((lines) => [...lines, `ORCH：审批通过，继续推进 ${gate.runtime.nextIndex < gate.runtime.enabledSteps.length ? gate.runtime.enabledSteps[gate.runtime.nextIndex].stage : "后续"} 节点。`]);
     setLogLines((lines) => [...lines, `审批结果：approved stage=${gate.step.stage} owner=${gate.step.owner}`, `审批备注：${approvalText}`]);
-    await continueWorkflow(gate.runtime);
+    await continueWorkflow(nextRuntimeAfterApproval(gate, note));
   }
 
   async function rejectCurrentGate(note: string) {
@@ -974,8 +1229,9 @@ function App() {
     setApprovalNote("");
     setError("");
     await tryRecordApproval(gate.runtime.archive, gate, "rejected", rejectionNote);
+    await rememberOrionUserWorkflowEvent(gate.runtime.task, "approval.rejected", rejectionNote, gate.step.owner, gate.step.stage, gate.runtime.archive);
     setApprovalGate(null);
-    setChatLines((lines) => [...lines, `你：${note || "否决"}`, `ORCH：已记录否决意见，打回 ${rollbackStep.owner} / ${rollbackStep.stage} 重做。`]);
+    setChatLines((lines) => [...lines, `ORCH：已记录否决意见，打回 ${rollbackStep.owner} / ${rollbackStep.stage} 重做。`]);
     setLogLines((lines) => [...lines, `审批结果：rejected stage=${gate.step.stage} owner=${gate.step.owner}`, `回滚目标：${rollbackStep.owner} / ${rollbackStep.stage}`, `否决意见：${rejectionNote}`]);
     await continueWorkflow(rollbackRuntime);
   }
@@ -988,7 +1244,8 @@ function App() {
       setRequirement("");
       setError("");
       setClarificationGate(null);
-      setChatLines((lines) => [...lines, `你：${answer}`, `ORCH：已确认 ${gate.step.owner} / ${gate.step.stage} 澄清完成，继续下一个流程。`]);
+      await rememberOrionUserWorkflowEvent(gate.runtime.task, "clarification.confirmed", answer, gate.step.owner, gate.step.stage, gate.runtime.archive);
+      setChatLines((lines) => [...lines, `ORCH：已确认 ${gate.step.owner} / ${gate.step.stage} 澄清完成，继续下一个流程。`]);
       setLogLines((lines) => [...lines, `Trellis 用户确认完成：${answer}`, `继续节点索引：${gate.stepIndex + 1}`]);
       await continueWorkflow(nextRuntime);
       return;
@@ -997,8 +1254,27 @@ function App() {
     setRequirement("");
     setError("");
     setClarificationGate(null);
+    await rememberOrionUserWorkflowEvent(gate.runtime.task, "clarification.answered", answer, gate.step.owner, gate.step.stage, gate.runtime.archive);
     setChatLines((lines) => [...lines, `你：${answer}`, `ORCH：已把补充信息交回 ${gate.step.owner} / ${gate.step.stage}，继续 Trellis 澄清。`]);
     setLogLines((lines) => [...lines, `Trellis 用户补充：${answer}`, `回到节点：${gate.step.owner} / ${gate.step.stage}`]);
+    await continueWorkflow(nextRuntime);
+  }
+
+  async function answerOrionObservationGate(answer: string) {
+    const gate = orionObservationGate;
+    if (!gate) return;
+    const userAnswer = answer.trim() || "继续推进。";
+    const nextRuntime = {
+      ...gate.runtime,
+      upstream: trimWorkflowContext(appendOrionObservationAnswerToUpstream(gate.runtime.upstream, gate.observation, userAnswer)),
+      nextIndex: gate.stepIndex + 1,
+    };
+    setRequirement("");
+    setError("");
+    setOrionObservationGate(null);
+    await rememberOrionUserWorkflowEvent(gate.runtime.task, "orion_observation.answered", userAnswer, gate.step.owner, gate.step.stage, gate.runtime.archive);
+    setChatLines((lines) => [...lines, `你：${userAnswer}`, `ORION：已把你的补充交回流程记忆，继续推进 ${nextRuntime.nextIndex < nextRuntime.enabledSteps.length ? nextRuntime.enabledSteps[nextRuntime.nextIndex].owner : "收尾"}。`]);
+    setLogLines((lines) => [...lines, `ORION observation answer: ${gate.step.owner} / ${gate.step.stage}`, userAnswer]);
     await continueWorkflow(nextRuntime);
   }
 
@@ -1024,6 +1300,10 @@ function App() {
       await answerClarificationGate(text);
       return;
     }
+    if (orionObservationGate) {
+      await answerOrionObservationGate(text);
+      return;
+    }
     if (approvalGate) {
       const decision = parseApprovalInput(text);
       if (decision.action === "approved") {
@@ -1040,74 +1320,546 @@ function App() {
     }
     const orionCommand = parseOrionCommand(text, false);
     if (orionCommand.type === "create_plan") {
-      createOrionPlan(orionCommand.task, { forceCustomWorkflow: true, userLine: `你：@orion ${orionCommand.task}` });
+      await createOrionPlan(orionCommand.task, { userLine: `你：@orion ${orionCommand.task}` });
       setRequirement("");
       return;
     }
     setRequirement("");
+    setChatLines((lines) => [...lines, `你：${taskText}`]);
     await handleOrionPrimaryConversation(taskText, attachments);
   }
 
   async function handleOrionPrimaryConversation(task: string, attachments: PendingAttachment[]) {
+    const latestQuestion = findLatestWaitingOrionQuestion(orionMemoryEntriesRef.current);
+    if (shouldTreatAsOrionQuestionAnswer(task, latestQuestion)) {
+      const contextualTask = createOrionQuestionAnswerTask(latestQuestion!, task);
+      const resolvedTask = createOrionResolvedTaskForOrch(latestQuestion!, task);
+      setLogLines((lines) => [...lines, "ORION question answer routed with memory context.", contextualTask]);
+      await rememberOrionQuestionAnswer(latestQuestion!, task);
+      await createOrionAssistantConversation(contextualTask, { userLine: "", routeReason: "answer_to_orion_question", attachments, resolvedTask });
+      return;
+    }
+
+    const processReply = createOrionProcessFollowUpReply(task, {
+      taskArchive,
+      artifactOutputDir: appSettings.artifact_output_dir,
+      memoryEntries: orionMemoryEntriesRef.current,
+      chatLines,
+      logLines,
+    });
+    if (shouldUseDirectOrionProcessFollowUpReply({ modelAvailable: canUseTauriCommands(), processReply })) {
+      setChatLines((lines) => [...lines, processReply]);
+      setLogLines((lines) => [...lines, "ORION process memory answered follow-up because model route is unavailable."]);
+      return;
+    }
     const projectFiles = summary?.files.map((file) => file.path) ?? workspaceFiles.map((file) => file.path);
+    const modelRoute = await runOrionIntentRouter(task);
+    if (modelRoute && intentRouteIsActionable(modelRoute)) {
+      setLogLines((lines) => [...lines, `ORION intent router: ${modelRoute.route} confidence=${modelRoute.confidence}`, modelRoute.reason]);
+      if (modelRoute.route === "chat") {
+        await createOrionOrdinaryChatConversation(task, `intent-router: ${modelRoute.reason}`, "");
+        return;
+      }
+      if (modelRoute.route === "assistant") {
+        await createOrionAssistantConversation(task, { userLine: "", routeReason: `intent-router: ${modelRoute.reason}`, attachments });
+        return;
+      }
+      if (modelRoute.route === "custom_workflow") {
+        await createOrionPlan(task, { userLine: "" });
+        return;
+      }
+      if (modelRoute.route === "ask_user") {
+        const question = modelRoute.question ?? "我需要你再补充一点信息，才能判断是普通聊天、助手任务还是开发流程。";
+        await rememberOrionQuestion(task, question, `intent-router: ${modelRoute.reason}`);
+        setOrionPendingPlan(null);
+        setOrionActivityRun(null);
+        setChatLines((lines) => [...lines, `ORION：${question}`]);
+        return;
+      }
+    } else if (modelRoute) {
+      const question = createOrionIntentClarificationQuestion(modelRoute);
+      await rememberOrionQuestion(task, question, `intent-router-low-confidence: ${modelRoute.reason}`);
+      setChatLines((lines) => [...lines, `ORION：${question}`]);
+      setLogLines((lines) => [...lines, `ORION intent router low confidence: ${modelRoute.route} confidence=${modelRoute.confidence}`, modelRoute.reason]);
+      return;
+    }
+
     const route = resolveOrionConversationRoute(task, {
       workflows,
       activeWorkflowId,
       projectFiles,
     });
+    const fallbackRouteMemory = formatOrionIntentRouteForMemory({
+      route: route.kind === "assistant" ? "assistant" : route.kind === "custom-workflow-draft" ? "custom_workflow" : "workflow",
+      confidence: 0.5,
+      reason: route.reason,
+    }, { source: "fallback" });
+    await rememberOrionDecision(task, "intent_router_fallback", fallbackRouteMemory.decision, fallbackRouteMemory.reason, fallbackRouteMemory.confidence);
 
     if (route.kind === "assistant") {
-      createOrionAssistantConversation(task, { userLine: `你：${task}`, routeReason: route.reason });
+      await createOrionAssistantConversation(task, { userLine: "", routeReason: route.reason, attachments });
       return;
     }
     if (route.kind === "custom-workflow-draft") {
-      createOrionPlan(task, { forceCustomWorkflow: true, userLine: `你：${task}` });
+      await createOrionPlan(task, { userLine: "" });
       return;
     }
 
-    setChatLines((lines) => [...lines, `ORION：我会使用已有工作流「${route.workflow.name}」处理这个开发任务，不需要额外审核工作流草案。`]);
-    setLogLines((lines) => [...lines, `ORION route existing workflow: ${route.workflow.id}`, route.reason]);
-    await startRealWorkflow(task, attachments, route.workflow, {
-      skipNodeApprovals: true,
-      initiatedBy: "orion-existing-workflow",
-      routeReason: route.reason,
+    await driveOrionDevelopmentWorkflow(task, attachments, route.workflow, route.reason, "");
+  }
+
+  async function runOrionIntentRouter(task: string): Promise<OrionIntentRouteDecision | null> {
+    if (!canUseTauriCommands()) return null;
+    setOrionChatRunning(true);
+    try {
+      const provider = providerInputForRole("administrator");
+      const result = await invoke<AgentRunResult>("run_agent", {
+        input: createOrionIntentRouterRunInput({
+          provider,
+          task,
+          chatLines,
+          activeWorkflowName: activeWorkflow?.name,
+          projectContext: summary?.root ? `root=${summary.root}; files=${summary.files.length}` : projectPath,
+          processContext: currentOrionProcessContext(),
+        }),
+      });
+      const decision = parseOrionIntentRouteDecision(result.output);
+      if (!decision) return null;
+      const normalized = normalizeOrionIntentRouteDecision(decision);
+      await rememberOrionDecision(task, "intent_router", normalized.route, normalized.reason, normalized.confidence);
+      return normalized;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setLogLines((lines) => [...lines, `ORION intent router failed: ${message}`]);
+      return null;
+    } finally {
+      setOrionChatRunning(false);
+    }
+  }
+
+  function currentOrionProcessContext() {
+    return formatOrionProcessContext({
+      taskArchive,
+      artifactOutputDir: appSettings.artifact_output_dir,
+      memoryEntries: orionMemoryEntriesRef.current,
+      chatLines,
+      logLines,
     });
   }
 
-  function createOrionAssistantConversation(task: string, options: { userLine: string; routeReason: string }) {
-    const response = createOrionAssistantResponse(task);
+  async function rememberOrionProcess(entry: OrionMemoryEntry, archive: TaskArchiveRef | null, task: string) {
+    const nextEntries = appendOrionMemoryEntry(orionMemoryEntriesRef.current, entry);
+    orionMemoryEntriesRef.current = nextEntries;
+    setOrionMemoryEntries(nextEntries);
+    await tryPersistOrionMemoryArchive(archive, task, nextEntries);
+  }
+
+  async function rememberOrionAssistantSummary(input: {
+    task: string;
+    reply: string;
+    resultMessages: string[];
+    traceId: string;
+    archive: TaskArchiveRef | null;
+    round?: number;
+    status?: "completed" | "failed" | "stopped";
+  }) {
+    const entry = createOrionAssistantSummaryMemoryEntry({
+      task: input.task,
+      reply: input.reply,
+      resultMessages: input.resultMessages,
+      traceId: input.traceId,
+      round: input.round,
+      status: input.status,
+      archivePath: input.archive?.path,
+      artifactPaths: extractRecentArtifactPaths({
+        taskArchive: input.archive,
+        artifactOutputDir: appSettings.artifact_output_dir,
+        memoryEntries: orionMemoryEntriesRef.current,
+        chatLines,
+        logLines,
+      }),
+    });
+    await rememberOrionProcess(entry, input.archive, input.task);
+  }
+
+  async function rememberOrionChatSummary(task: string, reply: string) {
+    const entry = createOrionChatSummaryMemoryEntry({ task, reply });
+    await rememberOrionProcess(entry, taskArchive, task);
+  }
+
+  async function rememberOrionQuestion(task: string, question: string, reason: string) {
+    const entry = createOrionAssistantQuestionMemoryEntry({ task, question, reason });
+    await rememberOrionProcess(entry, taskArchive, task);
+  }
+
+  async function rememberOrionQuestionAnswer(question: OrionMemoryEntry, answer: string) {
+    const entry = createOrionAssistantAnswerMemoryEntry({
+      task: question.task,
+      answer,
+      question: orionMemoryField(question.message, "question") || question.message,
+      traceId: question.traceId,
+      round: question.round + 1,
+    });
+    await rememberOrionProcess(entry, taskArchive, question.task);
+  }
+
+  async function rememberOrionDecision(task: string, decisionType: string, decision: string, reason: string, confidence?: number) {
+    const entry = createOrionDecisionMemoryEntry({
+      task,
+      decisionType,
+      decision,
+      reason,
+      confidence,
+    });
+    await rememberOrionProcess(entry, taskArchive, task);
+  }
+
+  async function rememberOrionModelPlannerFallback(task: string, decision: OrionModelDecision) {
+    const memoryDecision = formatOrionModelDecisionForMemory(decision, { source: "fallback" });
+    await rememberOrionDecision(task, "model_planner_fallback", memoryDecision.decision, memoryDecision.reason);
+  }
+
+  async function rememberOrionUserWorkflowEvent(task: string, eventType: string, note: string, owner: string, stage: string, archive: TaskArchiveRef | null) {
+    const entry = createOrionUserWorkflowEventMemoryEntry({
+      task,
+      eventType,
+      note,
+      owner,
+      stage,
+      archivePath: archive?.path,
+    });
+    await rememberOrionProcess(entry, archive, task);
+  }
+
+  async function rememberOrionUserAssistantEvent(task: string, eventType: string, note: string, actions: OrionAction[], archive: TaskArchiveRef | null) {
+    const entry = createOrionUserAssistantEventMemoryEntry({
+      task,
+      eventType,
+      note,
+      actions: actions.map((action) => action.kind),
+      archivePath: archive?.path,
+    });
+    await rememberOrionProcess(entry, archive, task);
+  }
+
+  function orionMemoryField(message: string, field: string) {
+    const pattern = new RegExp(`(?:^|\\n)${field}:\\s*([^\\n]+)`);
+    return message.match(pattern)?.[1]?.trim() ?? "";
+  }
+
+  async function driveOrionDevelopmentWorkflow(task: string, attachments: PendingAttachment[], fallbackWorkflow: WorkflowDefinition, routeReason: string, userLine = `你：${task}`) {
+    setChatLines((lines) => [...lines, ...(userLine ? [userLine] : []), "ORION：我会先做一次开发流程驾驶决策，再决定使用完整流程、轻量流程或专门草案。"]);
+    const modelDecision = await runOrionWorkflowDriver(task);
+    const decision = modelDecision ?? fallbackOrionWorkflowDriverDecision(fallbackWorkflow, routeReason);
+    if (!modelDecision) {
+      const fallbackMemory = formatOrionWorkflowDriverDecisionForMemory(decision, { source: "fallback" });
+      await rememberOrionDecision(task, "workflow_driver_fallback", fallbackMemory.decision, fallbackMemory.reason, fallbackMemory.confidence);
+    }
+    const application = applyOrionWorkflowDriverDecision(task, decision, workflows);
+    setLogLines((lines) => [...lines, `ORION workflow driver: ${decision.workflow} confidence=${decision.confidence}`, decision.reason]);
+    if (application.kind === "draft") {
+      const actions = createOrionActionPlan(application.workflow);
+      setOrionPendingPlan({ task, workflow: application.workflow, actions });
+      setInspectorView("output");
+      setChatLines((lines) => [
+        ...lines,
+        `ORION：我建议本次使用「${application.workflow.name}」。原因：${application.reason}`,
+        `ORION：${application.workflow.steps.map((step, index) => `${index + 1}. ${step.owner} / ${step.stage}`).join("；")}`,
+        "ORION：这是一份可审核流程草案。你可以同意并运行、只保存，或继续要求我增删节点。",
+      ]);
+      return;
+    }
+    setChatLines((lines) => [...lines, `ORION：我建议使用已有工作流「${application.workflow.name}」。原因：${application.reason}`]);
+    await startRealWorkflow(task, attachments, application.workflow, {
+      skipNodeApprovals: true,
+      initiatedBy: "orion-existing-workflow",
+      routeReason: `ORION workflow driver: ${application.reason}`,
+      echoUserTask: false,
+    });
+  }
+
+  async function createOrionAssistantConversation(task: string, options: { userLine: string; routeReason: string; attachments?: PendingAttachment[]; resolvedTask?: string }) {
     setOrionPendingPlan(null);
-    setOrionActivityRun(createOrionActivityRun(task, response.actions));
     setInspectorView("output");
-    const needsConfirmation = response.actions.some((action) => action.risk !== "direct");
+    setOrionActivityRun(null);
+    orionMatchedSkillIdsRef.current = [];
+    if (options.userLine) setChatLines((lines) => [...lines, options.userLine]);
+    const modelDecision = await runOrionModelPlanner(task);
+    const decision = modelDecision ?? fallbackOrionModelDecision(task);
+    if (!modelDecision) await rememberOrionModelPlannerFallback(task, decision);
+    if (decision.kind === "chat") {
+      const reply = decision.reply ? normalizeOrionChatOutput(decision.reply) : await runOrionOrdinaryChat(task);
+      setChatLines((lines) => [...lines, reply]);
+      await rememberOrionChatSummary(task, reply);
+      setLogLines((lines) => [...lines, `ORION model chat: ${decision.reason}`]);
+      return;
+    }
+    if (decision.kind === "ask_user") {
+      if (decision.capability_gap) recordOrionCapabilityGap(task, decision.capability_gap);
+      await rememberOrionQuestion(task, decision.question, `model-planner: ${decision.reason}`);
+      setChatLines((lines) => [...lines, `ORION：${decision.question}`]);
+      setLogLines((lines) => [...lines, `ORION model asks user: ${decision.reason}`]);
+      return;
+    }
+    if (decision.kind === "draft_workflow") {
+      await createOrionPlan(task, { userLine: "" });
+      setLogLines((lines) => [...lines, `ORION model routes to workflow draft: ${decision.reason}`]);
+      return;
+    }
+    if (decision.kind === "run_workflow") {
+      const handoffTask = options.resolvedTask ?? task;
+      const handoff = createOrionWorkflowDriverHandoff(handoffTask, decision, workflows, activeWorkflowId);
+      setLogLines((lines) => [...lines, `ORION model hands development task to workflow driver: ${handoff.reason}`]);
+      await driveOrionDevelopmentWorkflow(handoffTask, options.attachments ?? [], handoff.workflow, handoff.reason, "");
+      return;
+    }
+    await prepareOrionAssistantActions(task, decision.actions, `ORION model driver: ${decision.reason}`, orionMatchedSkillIdsRef.current);
+  }
+
+  async function createOrionOrdinaryChatConversation(task: string, routeReason: string, userLine = `你：${task}`) {
+    setOrionPendingPlan(null);
+    setInspectorView("output");
+    setOrionActivityRun(null);
+    if (userLine) setChatLines((lines) => [...lines, userLine]);
+    const reply = await runOrionOrdinaryChat(task);
+    setChatLines((lines) => [...lines, reply]);
+    await rememberOrionChatSummary(task, reply);
+    setLogLines((lines) => [...lines, `ORION ordinary chat route: ${routeReason}`]);
+  }
+
+  async function prepareOrionAssistantActions(task: string, actions: OrionAction[], message: string, matchedSkillIds: string[] = [], continuationRound = 0) {
+    const needsConfirmation = actions.some((action) => actionRequiresManualConfirmation(action, orionAccessMode));
+    const activityRun = createOrionActivityRun(task, actions);
+    setOrionActivityRun(activityRun);
     if (needsConfirmation) {
-      setOrionPendingAssistant({ task, message: response.message, actions: response.actions });
-    } else if (response.actions.length > 0) {
-      void executeOrionAssistantActions({ task, message: response.message, actions: response.actions }, "直接执行");
+      setOrionPendingAssistant({ task, message, actions, traceId: activityRun.id, matchedSkillIds, continuationRound });
+    } else if (actions.length > 0) {
+      void executeOrionAssistantActions({ task, message, actions, traceId: activityRun.id, matchedSkillIds, continuationRound }, "直接执行");
     }
     setChatLines((lines) => [
       ...lines,
-      options.userLine,
-      response.message,
-      response.actions.length > 0
-        ? `ORION：准备了 ${response.actions.length} 个本机助手动作草案：${response.actions.map((action) => `${action.kind}[${action.risk}]`).join(" -> ")}。${needsConfirmation ? "请允许本次或驳回。" : "我会直接处理只读动作。"}`
-        : "ORION：这不像需求开发或 Bug 修复，我会先按普通本机助手对话处理，不创建 ORCH 工作流。",
+      `ORION：准备了 ${actions.length} 个本机助手动作草案：${actions.map((action) => `${action.kind}[${action.risk}]`).join(" -> ")}。${needsConfirmation ? "请允许本次或驳回。" : summarizeAccessModeRisk(actions, orionAccessMode)}`,
     ]);
     setLogLines((lines) => [
       ...lines,
-      `ORION assistant intent: ${options.routeReason}`,
-      ...response.actions.map((action) => `${action.kind} risk=${action.risk} ${action.summary}`),
+      message,
+      ...actions.map((action) => `${action.kind} risk=${action.risk} ${action.summary}`),
     ]);
   }
 
-  function createOrionPlan(task: string, options: { forceCustomWorkflow?: boolean; userLine?: string } = {}) {
-    const projectFiles = summary?.files.map((file) => file.path) ?? workspaceFiles.map((file) => file.path);
-    const intent = classifyOrionIntent(task, { projectFiles });
-    if (!options.forceCustomWorkflow && intent.mode === "assistant") {
-      createOrionAssistantConversation(task, { userLine: options.userLine ?? `你：${task}`, routeReason: intent.reason });
+  function fallbackOrionModelDecision(task: string): OrionModelDecision {
+    const followUpReply = createOrionFollowUpReply(task, chatLines, selectFreshOrionMemoryEntries(orionMemoryEntries, orionMemoryEntriesRef.current));
+    if (followUpReply) return { kind: "chat", reply: followUpReply, reason: "structured_memory_follow_up" };
+    const response = createOrionAssistantResponse(task);
+    if (response.actions.length > 0) return { kind: "propose_actions", reason: "fallback_rule_planner", actions: response.actions };
+    return { kind: "chat", reply: "", reason: "fallback_plain_chat" };
+  }
+
+  async function runOrionModelPlanner(task: string, options: { chatLinesOverride?: string[]; memoryEntriesOverride?: OrionMemoryEntry[] } = {}): Promise<OrionModelDecision | null> {
+    if (!canUseTauriCommands()) return null;
+    setOrionChatRunning(true);
+    try {
+      const provider = providerInputForRole("administrator");
+      const skillMatches = matchRelevantOrionSkills(task, orionSkills);
+      orionMatchedSkillIdsRef.current = skillMatches.map((item) => item.skill.id);
+      const result = await invoke<AgentRunResult>("run_agent", {
+        input: createOrionModelPlannerRunInput({
+          provider,
+          task,
+          chatLines: options.chatLinesOverride ?? chatLines,
+          memoryContext: formatOrionMemoryContext(options.memoryEntriesOverride ?? orionMemoryEntriesRef.current),
+          capabilityGapContext: formatOrionCapabilityGapContext(orionCapabilityGaps),
+          skillContext: formatOrionSkillContext(skillMatches.map((item) => item.skill)),
+          accessModeContext: formatOrionAccessModeContext(orionAccessMode),
+          projectContext: summary?.root ? `root=${summary.root}; files=${summary.files.length}` : projectPath,
+          processContext: currentOrionProcessContext(),
+        }),
+      });
+      const decision = parseOrionModelDecision(result.output);
+      const memoryDecision = formatOrionModelDecisionForMemory(decision);
+      await rememberOrionDecision(task, "model_planner", memoryDecision.decision, memoryDecision.reason);
+      return decision;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setLogLines((lines) => [...lines, `ORION model planner failed: ${message}`]);
+      return null;
+    } finally {
+      setOrionChatRunning(false);
+    }
+  }
+
+  function recordOrionCapabilityGap(task: string, draft: NonNullable<Extract<OrionModelDecision, { kind: "ask_user" }>["capability_gap"]>) {
+    const gap = createOrionCapabilityGap(task, draft);
+    setOrionCapabilityGaps((gaps) => appendOrionCapabilityGap(gaps, gap));
+    setLogLines((lines) => [...lines, `ORION capability gap: ${formatOrionCapabilityGapLine(gap)}`, `推荐处理：${gap.recommendation.title} - ${gap.recommendation.detail}`]);
+  }
+
+  function recordWorkflowNodeFailure(step: WorkflowStep | null, message: string, kind?: WorkflowNodeFailure["kind"]) {
+    const failure = createWorkflowNodeFailure({ step, message, kind });
+    setWorkflowNodeFailure(failure);
+    return failure;
+  }
+
+  async function runOrionWorkflowDriver(task: string): Promise<OrionWorkflowDriverDecision | null> {
+    if (!canUseTauriCommands()) return null;
+    setOrionChatRunning(true);
+    try {
+      const provider = providerInputForRole("administrator");
+      const result = await invoke<AgentRunResult>("run_agent", {
+        input: createOrionWorkflowDriverRunInput({
+          provider,
+          task,
+          workflows,
+          projectContext: summary?.root ? `root=${summary.root}; files=${summary.files.length}` : projectPath,
+          processContext: currentOrionProcessContext(),
+        }),
+      });
+      const decision = parseOrionWorkflowDriverDecision(result.output);
+      await rememberOrionDecision(task, "workflow_driver", decision.workflow, decision.reason, decision.confidence);
+      return decision;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setLogLines((lines) => [...lines, `ORION workflow driver failed: ${message}`]);
+      return null;
+    } finally {
+      setOrionChatRunning(false);
+    }
+  }
+
+  async function runOrionWorkflowObserver(task: string, step: WorkflowStep, output: string): Promise<OrionWorkflowObservation | null> {
+    if (!canUseTauriCommands()) {
+      return createFallbackOrionWorkflowObservation({ owner: step.owner, stage: step.stage, reason: "tauri command runtime unavailable" });
+    }
+    try {
+      const provider = providerInputForRole("administrator");
+      const result = await invoke<AgentRunResult>("run_agent", {
+        input: createOrionWorkflowObserverRunInput({
+          provider,
+          task,
+          owner: step.owner,
+          stage: step.stage,
+          output,
+          processContext: currentOrionProcessContext(),
+        }),
+      });
+      return parseOrionWorkflowObservation(result.output);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setLogLines((lines) => [...lines, `ORION workflow observer failed: ${message}`]);
+      return createFallbackOrionWorkflowObservation({ owner: step.owner, stage: step.stage, reason: message });
+    }
+  }
+
+  async function rememberOrionWorkflowSummary(input: {
+    task: string;
+    status: OrionWorkflowRunStatus;
+    summaryText: string;
+    upstream: string;
+    archive: TaskArchiveRef | null;
+  }) {
+    if (!canUseTauriCommands()) {
+      await rememberOrionProcess(createOrionWorkflowSummaryMemoryEntry({
+        task: input.task,
+        status: input.status,
+        summary: createFallbackOrionWorkflowSummary({
+          status: input.status,
+          summaryText: input.summaryText,
+          reason: "tauri command runtime unavailable",
+        }),
+        archivePath: input.archive?.path,
+      }), input.archive, input.task);
       return;
     }
-    const workflow = draftOrionWorkflow(task);
+    try {
+      const provider = providerInputForRole("administrator");
+      const result = await invoke<AgentRunResult>("run_agent", {
+        input: createOrionWorkflowSummaryRunInput({
+          provider,
+          task: input.task,
+          status: input.status,
+          summaryText: input.summaryText,
+          upstream: input.upstream,
+          processContext: currentOrionProcessContext(),
+        }),
+      });
+      const summary = parseOrionWorkflowSummary(result.output);
+      await rememberOrionProcess(createOrionWorkflowSummaryMemoryEntry({
+        task: input.task,
+        status: input.status,
+        summary,
+        archivePath: input.archive?.path,
+      }), input.archive, input.task);
+      setLogLines((lines) => [...lines, `ORION workflow summary remembered: ${summary.outcome}`, summary.summary]);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setLogLines((lines) => [...lines, `ORION workflow summary failed: ${message}`]);
+      await rememberOrionProcess(createOrionWorkflowSummaryMemoryEntry({
+        task: input.task,
+        status: input.status,
+        summary: createFallbackOrionWorkflowSummary({
+          status: input.status,
+          summaryText: input.summaryText,
+          reason: message,
+        }),
+        archivePath: input.archive?.path,
+      }), input.archive, input.task);
+    }
+  }
+
+  function fallbackOrionWorkflowDriverDecision(fallbackWorkflow: WorkflowDefinition, reason: string): OrionWorkflowDriverDecision {
+    const workflow = fallbackWorkflow.id === "bug-fix"
+      ? "bug"
+      : fallbackWorkflow.id === "test-only"
+        ? "test"
+        : "full";
+    return {
+      workflow,
+      confidence: 0.55,
+      needs_clarification: false,
+      add_scout: false,
+      add_arch_review: false,
+      add_qa: workflow !== "test",
+      reason: `模型驾驶决策不可用，沿用 ORX 现有推荐：${reason}`,
+    };
+  }
+
+  function orionObservationRerunIndex(observation: OrionWorkflowObservation, currentIndex: number, steps: WorkflowStep[]) {
+    const targetStage = observation.target_stage?.trim();
+    if (!targetStage) return currentIndex;
+    const targetIndex = steps.findIndex((item) => item.stage === targetStage || `${item.owner} / ${item.stage}` === targetStage);
+    if (targetIndex < 0) return currentIndex;
+    return Math.min(targetIndex, currentIndex);
+  }
+
+  async function runOrionOrdinaryChat(task: string) {
+    if (!canUseTauriCommands()) {
+      return "ORION：我在。普通聊天需要在 Tauri 客户端里调用当前模型服务，浏览器预览里暂时只能返回这条兜底回复。";
+    }
+    setOrionChatRunning(true);
+    try {
+      const provider = providerInputForRole("administrator");
+      const result = await invoke<AgentRunResult>("run_agent", {
+        input: createOrionChatRunInput({
+          provider,
+          task,
+          chatLines,
+          memoryContext: formatOrionMemoryContext(selectFreshOrionMemoryEntries(orionMemoryEntries, orionMemoryEntriesRef.current)),
+          processContext: currentOrionProcessContext(),
+        }),
+      });
+      return normalizeOrionChatOutput(result.output);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setLogLines((lines) => [...lines, `ORION ordinary chat failed: ${message}`]);
+      return `ORION：我在，但普通聊天模型调用失败了：${message}`;
+    } finally {
+      setOrionChatRunning(false);
+    }
+  }
+
+  async function createOrionPlan(task: string, options: { userLine?: string } = {}) {
+    const draft = await runOrionCustomWorkflowDraft(task);
+    const workflow = draft.workflow;
     const actions = createOrionActionPlan(workflow);
     const plan = { task, workflow, actions };
     const planRisk = highestOrionRisk(actions);
@@ -1115,12 +1867,48 @@ function App() {
     setInspectorView("output");
     setChatLines((lines) => [
       ...lines,
-      options.userLine ?? `你：${task}`,
+      ...(options.userLine === "" ? [] : [options.userLine ?? `你：${task}`]),
       `ORION：我已为这个任务拟定工作流草案「${workflow.name}」，先不执行。`,
       `ORION：${workflow.steps.map((step, index) => `${index + 1}. ${step.owner} / ${step.stage}${step.skill_ids?.length ? `（${step.skill_ids.join(", ")}）` : ""}`).join("；")}`,
       `ORION：请审阅后选择“同意并运行”或“只保存工作流”；不合适可以驳回，也可以继续输入要求，例如“加 QA 全量覆盖”“让 DEV 参考某个文件”“先 Trellis 澄清”。`,
     ]);
-    setLogLines((lines) => [...lines, `ORION draft requires user confirmation: ${planRisk}`, `ORION plan: ${workflow.name}`, ...actions.map((action) => `${action.kind} risk=${action.risk} ${action.summary}`)]);
+    setLogLines((lines) => [...lines, `ORION draft requires user confirmation: ${planRisk}`, `ORION plan: ${workflow.name}`, `ORION draft source: ${draft.reason}`, ...actions.map((action) => `${action.kind} risk=${action.risk} ${action.summary}`)]);
+  }
+
+  async function runOrionCustomWorkflowDraft(task: string) {
+    if (!canUseTauriCommands()) {
+      const fallback = createFallbackOrionWorkflowDraft(task, "tauri command runtime unavailable");
+      const memory = formatOrionWorkflowDraftDecisionForMemory(fallback, { source: "fallback", reason: fallback.reason });
+      await rememberOrionDecision(task, "workflow_draft_fallback", memory.decision, memory.reason, memory.confidence);
+      return fallback;
+    }
+    setOrionChatRunning(true);
+    try {
+      const provider = providerInputForRole("administrator");
+      const result = await invoke<AgentRunResult>("run_agent", {
+        input: createOrionWorkflowDraftRunInput({
+          provider,
+          task,
+          projectContext: summary?.root ? `root=${summary.root}; files=${summary.files.length}` : projectPath,
+          processContext: currentOrionProcessContext(),
+        }),
+      });
+      const workflow = parseOrionWorkflowDraft(result.output, { task });
+      if (!workflow) throw new Error("model returned an empty or unsafe workflow draft");
+      const draft = { workflow, reason: "model generated custom workflow draft" };
+      const memory = formatOrionWorkflowDraftDecisionForMemory(draft, { source: "model", reason: draft.reason });
+      await rememberOrionDecision(task, "workflow_draft", memory.decision, memory.reason, memory.confidence);
+      return draft;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setLogLines((lines) => [...lines, `ORION workflow draft model failed: ${message}`]);
+      const fallback = createFallbackOrionWorkflowDraft(task, message);
+      const memory = formatOrionWorkflowDraftDecisionForMemory(fallback, { source: "fallback", reason: fallback.reason });
+      await rememberOrionDecision(task, "workflow_draft_fallback", memory.decision, memory.reason, memory.confidence);
+      return fallback;
+    } finally {
+      setOrionChatRunning(false);
+    }
   }
 
   async function handleOrionConversationCommand(text: string, hasPendingPlan: boolean) {
@@ -1161,8 +1949,48 @@ function App() {
       setChatLines((lines) => [...lines, `你：${text}`, `ORION：这份草案最高权限是 ${orionRiskLabel(highestOrionRisk(orionPendingPlan.actions))}，因为同意后会保存工作流、挂载 capability，${orionPendingPlan.actions.some((action) => action.kind === "workflow.run") ? "并启动 ORCH 执行。" : "但不会自动运行。"}我不会在你确认前执行。`]);
       return;
     }
+    await reviseOrionPendingPlanWithModel(text);
+  }
+
+  async function reviseOrionPendingPlanWithModel(note: string) {
+    const plan = orionPendingPlan;
+    if (!plan) return;
     setRequirement("");
-    setChatLines((lines) => [...lines, `你：${text}`, "ORION：我还不能可靠地把这句话转成工作流修改。草案已保留，你可以换一种说法，比如“加 QA 全量覆盖”“不要 QA”“让开发 Agent 参考 docs/old-prd.md”，也可以同意或驳回。"]);
+    setChatLines((lines) => [...lines, `你：${note}`]);
+    if (!canUseTauriCommands()) {
+      setChatLines((lines) => [...lines, "ORION：当前模型运行环境不可用，我保留了原草案。你可以稍后重试，也可以使用明确的节点修改要求。"]);
+      return;
+    }
+    setOrionChatRunning(true);
+    try {
+      const provider = providerInputForRole("administrator");
+      const result = await invoke<AgentRunResult>("run_agent", {
+        input: createOrionWorkflowRevisionRunInput({
+          provider,
+          task: plan.task,
+          revision: note,
+          workflow: plan.workflow,
+          projectContext: summary?.root ? `root=${summary.root}; files=${summary.files.length}` : projectPath,
+          processContext: currentOrionProcessContext(),
+        }),
+      });
+      const workflow = parseOrionWorkflowRevision(result.output, plan.workflow);
+      if (!workflow) throw new Error("model returned an empty or unsafe workflow revision");
+      const nextPlan = applyOrionWorkflowRevision(plan, workflow);
+      setOrionPendingPlan(nextPlan);
+      setInspectorView("output");
+      const memory = formatOrionWorkflowDraftDecisionForMemory({ workflow, reason: "model revised pending workflow draft" }, { source: "model", reason: `user revision: ${note}` });
+      await rememberOrionDecision(plan.task, "workflow_revision", memory.decision, memory.reason, memory.confidence);
+      setChatLines((lines) => [...lines, `ORION：我已根据你的要求修订工作流草案「${workflow.name}」。右侧预览已更新，你可以继续提要求，也可以同意并运行或驳回。`]);
+      setLogLines((lines) => [...lines, `ORION workflow revision: ${workflow.name}`, ...nextPlan.actions.map((action) => `${action.kind} risk=${action.risk} ${action.summary}`)]);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setChatLines((lines) => [...lines, "ORION：这次没有生成可安全采用的修订版，我保留了原草案。你可以继续描述想调整的部分。"]);
+      setLogLines((lines) => [...lines, `ORION workflow revision model failed: ${message}`]);
+      await rememberOrionDecision(plan.task, "workflow_revision_failed", "retained original pending workflow", `user revision: ${note}; error: ${message}`, 0.4);
+    } finally {
+      setOrionChatRunning(false);
+    }
   }
 
   async function handleOrionAssistantCommand(text: string) {
@@ -1173,7 +2001,7 @@ function App() {
       return;
     }
     if (/^(驳回|拒绝|取消|不要|reject|no|n)$/i.test(normalized)) {
-      rejectOrionPendingAssistant(text || "驳回");
+      await rejectOrionPendingAssistant(text || "驳回");
       return;
     }
     setRequirement("");
@@ -1224,43 +2052,298 @@ function App() {
   }
 
   async function executeOrionAssistantActions(pending: OrionPendingAssistant, approvalLine: string) {
-    setChatLines((lines) => [...lines, `你：${approvalLine}`, `ORION：开始执行 ${pending.actions.length} 个本机助手动作。`]);
+    await rememberOrionUserAssistantEvent(
+      pending.task,
+      approvalLine === "直接执行" ? "assistant.auto_executed" : "assistant.approved",
+      approvalLine,
+      pending.actions,
+      taskArchive,
+    );
+    setChatLines((lines) => [...lines, `ORION：开始执行 ${pending.actions.length} 个本机助手动作。`]);
     setOrionAssistantActionCount(pending.actions.length);
+    let memoryArchive = taskArchive;
+    let memoryEntriesSnapshot = selectFreshOrionMemoryEntries(orionMemoryEntries, orionMemoryEntriesRef.current);
+    const actionResultMessages: string[] = [];
+    let stoppedAfterAction = false;
     try {
-      for (const action of pending.actions) {
+      for (const [index, action] of pending.actions.entries()) {
         setOrionActivityRun((run) => run ? markOrionActivityActionRunning(run, action.id) : run);
         try {
           const result = await executeOrionAssistantAction(action);
+          const memoryEntry = createOrionMemoryEntry(pending.task, action, result.message, {
+            traceId: pending.traceId,
+            round: index + 1,
+          });
+          memoryEntriesSnapshot = appendFreshOrionMemoryEntry(memoryEntriesSnapshot, orionMemoryEntriesRef.current, memoryEntry);
+          replaceOrionConversationMemory(memoryEntriesSnapshot);
+          memoryArchive = await tryPersistOrionMemoryArchive(memoryArchive, pending.task, memoryEntriesSnapshot);
           setOrionActivityRun((run) => run ? markOrionActivityActionDone(run, action.id, result.message) : run);
           setChatLines((lines) => [...lines, `ORION：${result.message}`]);
+          actionResultMessages.push(`${action.kind}: ${result.message}`);
           setLogLines((lines) => [...lines, `ORION assistant action done: ${action.kind}`, result.message]);
           if (result.stop) {
+            stoppedAfterAction = true;
             setChatLines((lines) => [...lines, "ORION：已停止后续本机助手动作，避免在失败状态下继续执行。"]);
             setLogLines((lines) => [...lines, "ORION assistant action sequence stopped after failed command."]);
             break;
           }
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
+          const retryAction = createInsecureWebFetchRetryAction(action, message);
           setOrionActivityRun((run) => run ? markOrionActivityActionFailed(run, action.id, message) : run);
-          setChatLines((lines) => [...lines, `ORION：动作执行失败：${message}`]);
+          setChatLines((lines) => [
+            ...lines,
+            `ORION：动作执行失败：${formatOrionAssistantActionError(message)}`,
+            ...(retryAction ? ["ORION：目标网站的 HTTPS 证书无效。可以切换为“不安全读取重试”，我会忽略证书校验继续读取，但页面内容可能不可信。"] : []),
+          ]);
+          actionResultMessages.push(`failed: ${message}`);
           setLogLines((lines) => [...lines, `ORION assistant action failed: ${action.kind}`, message]);
+          if (retryAction) {
+            const retryRun = createOrionActivityRun(pending.task, [retryAction]);
+            setOrionActivityRun(retryRun);
+            setOrionPendingAssistant({
+              task: pending.task,
+              message: "ORION insecure web fetch retry after certificate validation failure.",
+              actions: [retryAction],
+              traceId: retryRun.id,
+              matchedSkillIds: pending.matchedSkillIds,
+              continuationRound: pending.continuationRound ?? 0,
+            });
+          }
+          stoppedAfterAction = true;
           break;
         }
+      }
+      if (actionResultMessages.length > 0 && !stoppedAfterAction) {
+        recordOrionSkill(pending.task, pending.actions, actionResultMessages, stoppedAfterAction, pending.matchedSkillIds ?? []);
+        const continued = await continueOrionAssistantLoop(pending, actionResultMessages, memoryEntriesSnapshot, memoryArchive);
+        if (!continued) {
+          const summaryReply = await runOrionActionResultSummary(pending.task, actionResultMessages);
+          if (summaryReply) {
+            setChatLines((lines) => [...lines, summaryReply]);
+            await rememberOrionAssistantSummary({
+              task: pending.task,
+              reply: summaryReply,
+              resultMessages: actionResultMessages,
+              traceId: pending.traceId,
+              archive: memoryArchive,
+              round: (pending.continuationRound ?? 0) + pending.actions.length + 1,
+            });
+          }
+        }
+      }
+      if (actionResultMessages.length > 0 && stoppedAfterAction) {
+        await rememberOrionAssistantSummary({
+          task: pending.task,
+          reply: "ORION stopped the local assistant action sequence after a failed or unsafe tool result.",
+          resultMessages: actionResultMessages,
+          traceId: pending.traceId,
+          archive: memoryArchive,
+          round: (pending.continuationRound ?? 0) + actionResultMessages.length + 1,
+          status: "stopped",
+        });
       }
     } finally {
       setOrionAssistantActionCount(0);
     }
   }
 
-  function rejectOrionPendingAssistant(inputText = "驳回") {
+  async function continueOrionAssistantLoop(
+    pending: OrionPendingAssistant,
+    actionResultMessages: string[],
+    memoryEntriesSnapshot: OrionMemoryEntry[],
+    memoryArchive: TaskArchiveRef | null,
+  ) {
+    const round = pending.continuationRound ?? 0;
+    if (!shouldContinueOrionAssistantLoop({ round, resultCount: actionResultMessages.length, stopped: false })) {
+      return false;
+    }
+
+    const continuationTask = createOrionAssistantContinuationTask({
+      originalTask: pending.task,
+      resultMessages: actionResultMessages,
+    });
+    const modelDecision = await runOrionModelPlanner(continuationTask, {
+      chatLinesOverride: [...chatLines, `ORION 工具结果：${actionResultMessages.join("；")}`],
+      memoryEntriesOverride: memoryEntriesSnapshot,
+    });
+    const decision = modelDecision ?? fallbackOrionModelDecision(continuationTask);
+    if (!modelDecision) await rememberOrionModelPlannerFallback(continuationTask, decision);
+    setLogLines((lines) => [...lines, `ORION assistant loop decision: ${decision.kind}`]);
+
+    if (decision.kind === "propose_actions") {
+      await prepareOrionAssistantActions(
+        pending.task,
+        decision.actions,
+        `ORION assistant loop: ${decision.reason}`,
+        pending.matchedSkillIds ?? [],
+        round + 1,
+      );
+      return true;
+    }
+
+    if (decision.kind === "ask_user") {
+      if (decision.capability_gap) recordOrionCapabilityGap(pending.task, decision.capability_gap);
+      await rememberOrionQuestion(pending.task, decision.question, `assistant-loop: ${decision.reason}`);
+      setChatLines((lines) => [...lines, `ORION：${decision.question}`]);
+      setLogLines((lines) => [...lines, `ORION assistant loop asks user: ${decision.reason}`]);
+      return true;
+    }
+
+    if (decision.kind === "chat" && decision.reply.trim()) {
+      const reply = normalizeOrionChatOutput(decision.reply);
+      setChatLines((lines) => [...lines, reply]);
+      await rememberOrionAssistantSummary({
+        task: pending.task,
+        reply,
+        resultMessages: actionResultMessages,
+        traceId: pending.traceId,
+        archive: memoryArchive,
+        round: round + 1,
+      });
+      setLogLines((lines) => [...lines, `ORION assistant loop final reply: ${decision.reason}`]);
+      return true;
+    }
+
+    return false;
+  }
+
+  function createInsecureWebFetchRetryAction(action: OrionAction, message: string) {
+    if (action.kind !== "web.fetchUrl" || !orionWebFetchErrorLooksLikeInvalidCertificate(message)) return null;
+    const url = typeof action.payload.url === "string" && action.payload.url.trim()
+      ? action.payload.url.trim()
+      : extractUrlFromText(`${action.payload.request ?? ""} ${action.summary} ${action.title}`);
+    if (!url) return null;
+    return createOrionAction(
+      "web.fetchUrlInsecure",
+      "不安全读取网页",
+      `忽略 HTTPS 证书校验后重试读取：${url}`,
+      {
+        ...action.payload,
+        url,
+        include_html: action.payload.include_html !== false,
+        include_headers: action.payload.include_headers !== false,
+        max_bytes: typeof action.payload.max_bytes === "number" ? action.payload.max_bytes : 200000,
+      },
+    );
+  }
+
+  function orionWebFetchErrorLooksLikeInvalidCertificate(message: string) {
+    return /certificate|cert|tls|invalid peer certificate|expired|not valid/i.test(message);
+  }
+
+  function formatOrionAssistantActionError(message: string) {
+    if (orionWebFetchErrorLooksLikeInvalidCertificate(message)) {
+      return `目标网站 HTTPS 证书无效或已过期，ORX 已阻止安全读取。原始错误：${message}`;
+    }
+    return message;
+  }
+
+  function recordOrionSkill(task: string, actions: OrionAction[], resultMessages: string[], stopped: boolean, matchedSkillIds: string[] = []) {
+    const skill = createOrionSkillFromResults({
+      task,
+      actionKinds: actions.map((action) => action.kind),
+      resultMessages,
+      stopped,
+    });
+    if (!skill) {
+      setLogLines((lines) => [...lines, "ORION skill distill skipped: result trace is not stable enough."]);
+      return;
+    }
+    const matchedSkillId = matchedSkillIds[0];
+    if (matchedSkillId) {
+      const result = reinforceOrionSkill(orionSkillsRef.current, matchedSkillId, {
+        task: skill.task,
+        actionKinds: skill.actionKinds,
+        resultSummary: skill.resultSummary,
+        now: skill.updatedAt,
+      });
+      const reinforced = result.reinforced;
+      if (reinforced) {
+        orionSkillsRef.current = result.skills;
+        setOrionSkills(result.skills);
+        setLogLines((lines) => [...lines, `ORION skill reinforced: ${formatOrionSkillLine(reinforced)}`]);
+        return;
+      }
+    }
+    const nextSkills = appendOrionSkill(orionSkillsRef.current, skill);
+    orionSkillsRef.current = nextSkills;
+    setOrionSkills(nextSkills);
+    setLogLines((lines) => [...lines, `ORION skill distilled: ${formatOrionSkillLine(skill)}`]);
+  }
+
+  async function runOrionActionResultSummary(task: string, resultMessages: string[]) {
+    if (!canUseTauriCommands()) return "";
+    setOrionChatRunning(true);
+    try {
+      const provider = providerInputForRole("administrator");
+      const result = await invoke<AgentRunResult>("run_agent", {
+        input: {
+          provider,
+          owner: "ORION",
+          stage: "结果整理",
+          task: [
+            `用户目标：${task}`,
+            "下面是 ORX 已安全执行完成的工具结果。请作为 ORION 用自然语言告诉用户结论。",
+            "不要输出“可交付产物/风险/下一步建议/节点完成”这类节点报告字段。",
+            "只有在确实有后续建议时才给建议；如果没有明确建议，直接给结论。",
+          ].join("\n"),
+          upstream: resultMessages.join("\n\n"),
+        },
+      });
+      return normalizeOrionChatOutput(result.output);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setLogLines((lines) => [...lines, `ORION result summary failed: ${message}`]);
+      return "";
+    } finally {
+      setOrionChatRunning(false);
+    }
+  }
+
+  async function tryPersistOrionMemoryArchive(archive: TaskArchiveRef | null, task: string, entries: OrionMemoryEntry[]) {
+    if (!canUseTauriCommands() || entries.length === 0) return archive;
+    try {
+      const targetArchive = archive ?? await tryStartTaskArchive(`ORION 本机助手：${task}`);
+      if (!targetArchive) return archive;
+      await invoke<GeneratedArtifactWriteResult>("orion_write_generated_artifact", {
+        input: {
+          task_dir: targetArchive.path,
+          relative_path: "orion-memory.json",
+          content: formatOrionMemoryJson(entries),
+        },
+      });
+      await invoke<GeneratedArtifactWriteResult>("orion_write_generated_artifact", {
+        input: {
+          task_dir: targetArchive.path,
+          relative_path: "orion-findings.md",
+          content: formatOrionFindingsMarkdown(entries),
+        },
+      });
+      setLogLines((lines) => [...lines, `ORION memory persisted: ${targetArchive.path}\\generated\\orion-memory.json`]);
+      return targetArchive;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setLogLines((lines) => [...lines, `ORION memory persist failed: ${message}`]);
+      return archive;
+    }
+  }
+
+  async function rejectOrionPendingAssistant(inputText = "驳回") {
     if (!orionPendingAssistant) return;
+    const pending = orionPendingAssistant;
+    await rememberOrionUserAssistantEvent(pending.task, "assistant.rejected", inputText, pending.actions, taskArchive);
     setChatLines((lines) => [...lines, `你：${inputText}`, "ORION：已取消这组本机助手动作。"]);
-    setLogLines((lines) => [...lines, `ORION assistant reject: ${orionPendingAssistant.task}`]);
+    setLogLines((lines) => [...lines, `ORION assistant reject: ${pending.task}`]);
     setOrionPendingAssistant(null);
     setRequirement("");
   }
 
   async function executeOrionAssistantAction(action: OrionAction): Promise<{ message: string; stop: boolean }> {
+    const validation = validateOrionToolAction(action);
+    if (!validation.ok) {
+      return { message: validation.message, stop: true };
+    }
     if (action.kind === "local.inspectConfig") {
       if (!canUseTauriCommands()) {
         return {
@@ -1293,11 +2376,40 @@ function App() {
         stop: false,
       };
     }
+    if (action.kind === "web.fetchUrl" || action.kind === "web.fetchUrlInsecure") {
+      if (!canUseTauriCommands()) {
+        throw new Error("网页读取需要在 Tauri 客户端中执行；浏览器预览不可用。");
+      }
+      const url = typeof action.payload.url === "string" && action.payload.url.trim()
+        ? action.payload.url.trim()
+        : extractUrlFromText(`${action.payload.request ?? ""} ${action.summary} ${action.title}`);
+      if (!url) {
+        return { message: "ORION 已识别到网页读取动作，但缺少 URL。请补充要读取的网址。", stop: true };
+      }
+      const result = await invoke<WebFetchResult>("orion_fetch_url", {
+        input: {
+          url,
+          include_html: action.payload.include_html !== false,
+          include_headers: action.payload.include_headers !== false,
+          max_bytes: typeof action.payload.max_bytes === "number" ? action.payload.max_bytes : 200000,
+          danger_accept_invalid_certs: action.kind === "web.fetchUrlInsecure",
+        },
+      });
+      return {
+        message: formatWebFetchResult(result),
+        stop: false,
+      };
+    }
     if (action.kind === "web.searchPublic" || action.kind === "web.searchSensitive") {
       if (!canUseTauriCommands()) {
         throw new Error("联网查询需要在 Tauri 客户端中执行；浏览器预览不可用。");
       }
-      const query = typeof action.payload.query === "string" ? action.payload.query : "";
+      const query = typeof action.payload.query === "string" && action.payload.query.trim()
+        ? action.payload.query.trim()
+        : extractUrlFromText(`${action.payload.request ?? ""} ${action.summary} ${action.title}`) || String(action.payload.request ?? "").trim();
+      if (!query) {
+        return { message: "ORION 已识别到联网查询动作，但缺少查询词或网址。请补充要查询的关键词或 URL。", stop: true };
+      }
       const maxResults = typeof action.payload.max_results === "number" ? action.payload.max_results : 5;
       const result = await invoke<WebSearchResult>("orion_web_search", {
         input: { query, max_results: maxResults },
@@ -1314,7 +2426,7 @@ function App() {
       const relativePath = typeof action.payload.relative_path === "string" ? action.payload.relative_path : "";
       const content = typeof action.payload.content === "string" ? action.payload.content : "";
       if (!relativePath || !content) {
-        return { message: "文件写入动作缺少相对路径或内容，已停止。", stop: true };
+        return { message: "ORION 识别到你想写文件，但还缺少文件名/相对路径或要写入的具体内容。请补充例如“写入 generated/demo.txt，内容是 ...”。", stop: true };
       }
       const archive = taskArchive ?? await tryStartTaskArchive(`ORION 本机助手：${action.payload.request ?? action.title}`);
       if (!archive) {
@@ -1400,18 +2512,17 @@ function App() {
     setRequirement("");
   }
 
-  async function executeOrionPendingPlan(plan: OrionPendingPlan, approvalMode: "once" | "session" | "text" | "save-only" = "text") {
+  async function executeOrionPendingPlan(plan: OrionPendingPlan, _approvalMode: "once" | "session" | "text" | "save-only" = "text") {
     const nextWorkflows = [...workflows.filter((workflow) => workflow.id !== plan.workflow.id), plan.workflow];
     setWorkflows(nextWorkflows);
     setActiveWorkflowId(plan.workflow.id);
     setOrionPendingPlan(null);
     setRequirement("");
-    const approvalLine = approvalMode === "session" ? "本会话始终允许同类权限" : approvalMode === "once" ? "同意并运行" : approvalMode === "save-only" ? "只保存工作流" : "同意";
     const shouldRun = plan.actions.some((action) => action.kind === "workflow.run");
-    setChatLines((lines) => [...lines, `你：${approvalLine}`, shouldRun ? `ORION：已保存工作流「${plan.workflow.name}」，现在交给 ORCH Core 执行。` : `ORION：已保存工作流「${plan.workflow.name}」，不会自动运行。`]);
+    setChatLines((lines) => [...lines, shouldRun ? `ORION：已保存工作流「${plan.workflow.name}」，现在交给 ORCH Core 执行。` : `ORION：已保存工作流「${plan.workflow.name}」，不会自动运行。`]);
     setLogLines((lines) => [...lines, `ORION execute: saved workflow ${plan.workflow.id}`]);
     if (shouldRun) {
-      await startRealWorkflow(plan.task, [], plan.workflow, { initiatedBy: "orion-custom-workflow" });
+      await startRealWorkflow(plan.task, [], plan.workflow, { initiatedBy: "orion-custom-workflow", echoUserTask: false });
     }
   }
 
@@ -1476,11 +2587,13 @@ function App() {
     setTaskArchive(null);
     setApprovalGate(null);
     setClarificationGate(null);
+    setOrionObservationGate(null);
+    setWorkflowNodeFailure(null);
     setApprovalNote("");
     setCurrentActivity("ORCH 实时巡检中");
     const approvalSummary = workflowApprovalSummary(enabledSteps);
     const attachmentLine = attachments.length > 0 ? `\n附件：${attachments.map((item) => item.name).join("、")}` : "";
-    setChatLines((lines) => [...lines, `你：${task}${attachmentLine}`, "ORCH：收到任务，正在读取流程配置。", `ORCH：动态路由选择：${selectedWorkflow.name}（${routeDecision.confidence}，${routeDecision.reason}）`, `ORCH：当前工作流：${selectedWorkflow.name}（${enabledSteps.length} 个节点）。`, `ORCH：${approvalSummary}`, `ORCH：启用实时巡检，节点完成后立即推进。`]);
+    setChatLines((lines) => [...lines, ...(options.echoUserTask === false ? [] : [`你：${task}${attachmentLine}`]), "ORCH：收到任务，正在读取流程配置。", `ORCH：动态路由选择：${selectedWorkflow.name}（${routeDecision.confidence}，${routeDecision.reason}）`, `ORCH：当前工作流：${selectedWorkflow.name}（${enabledSteps.length} 个节点）。`, `ORCH：${approvalSummary}`, `ORCH：启用实时巡检，节点完成后立即推进。`]);
     setLogLines((lines) => [...lines, "> start_workflow real", `用户任务：${task}`, `动态路由：${selectedWorkflow.name} / ${routeDecision.confidence} / ${routeDecision.reason}`, `当前工作流：${selectedWorkflow.name} / ${enabledSteps.length} 个节点`, approvalSummary, `巡检模式：实时巡检 / 节点完成即推进`, `ORCH：读取流程配置，准备顺序调度 ${enabledSteps.length} 个节点。`]);
     const archive = await tryStartTaskArchive(task);
     let attachmentContext = "";
@@ -1498,7 +2611,14 @@ function App() {
     if (relevantRules.length > 0) {
       setLogLines((lines) => [...lines, `长期记忆命中：${relevantRules.map((rule) => rule.title).join("；")}`]);
     }
-    const upstream = `用户任务：${task}\n项目上下文：${projectContext}\n${memoryContext}${attachmentContext ? `\n${attachmentContext}` : ""}`;
+    const upstream = createOrionWorkflowStartUpstream({
+      task,
+      projectContext,
+      projectPath,
+      memoryContext,
+      orionMemoryEntries: orionMemoryEntriesRef.current,
+      attachmentContext,
+    });
     await continueWorkflow({
       task,
       enabledSteps,
@@ -1508,6 +2628,7 @@ function App() {
       workflowStart,
       runTotals: { elapsed_ms: 0, input_tokens: 0, output_tokens: 0, total_tokens: 0 },
       artifactRetries: {},
+      observationRetries: {},
       skipNodeApprovals: options.skipNodeApprovals,
     });
   }
@@ -1516,9 +2637,11 @@ function App() {
     setWorkflowRunning(true);
     setApprovalGate(null);
     setClarificationGate(null);
+    setOrionObservationGate(null);
     let activeStep: WorkflowStep | null = null;
     let pausedForApproval = false;
     let pausedForClarification = false;
+    let pausedForObservation = false;
     let stoppedByUser = false;
     try {
       for (let stepIndex = runtime.nextIndex; stepIndex < runtime.enabledSteps.length; stepIndex += 1) {
@@ -1532,7 +2655,8 @@ function App() {
         const provider = providerInputForRole(role);
         const endpoint = providerEndpoint(provider);
         const nodeInstructionContext = orionNodeInstructionContext(step);
-        const stepUpstream = trimWorkflowContext(`${runtime.upstream}${nodeInstructionContext}`);
+        const stepCompletionCriteria = formatWorkflowStepCompletionCriteria(step);
+        const stepUpstream = trimWorkflowContext(`${runtime.upstream}${nodeInstructionContext}${stepCompletionCriteria}`);
         const upstreamBeforeStep = runtime.upstream;
         setCurrentActivity(`${step.owner} 处理中`);
         setWorkflowMetrics((metrics) => [...metrics, { stage: step.stage, owner: step.owner, status: "running", elapsed_ms: 0, input_tokens: 0, output_tokens: 0, total_tokens: 0, output_preview: "处理中..." }]);
@@ -1583,16 +2707,34 @@ function App() {
           if (retryCount < 1) {
             const retryReason = artifactSave.ok ? "未输出可落盘代码产物" : `产物保存/校验失败：${artifactSave.message}`;
             const retryNote = `DEV 节点${retryReason}。当前任务需要实际非空文件，请输出 Markdown 代码块，并在代码块第一行写明文件名，例如 <!-- FILE: index.html -->，代码块内容不能为空。`;
+            const failure = recordWorkflowNodeFailure(step, retryNote, "artifact_missing");
             const retryUpstream = trimWorkflowContext(`${runtime.upstream}\n\n[ORCH / artifact gate]\n${retryNote}\n上一次 DEV 输出仅作为失败记录，不得继续交给 QA。`);
             setWorkflowMetrics((metrics) => metrics.map((metric) => metric.stage === step.stage && metric.owner === step.owner && metric.status === "running" ? { ...metric, status: "failed", output_preview: retryNote } : metric));
-            setChatLines((lines) => [...lines, `ORCH：${step.owner} 未提交实际文件产物，已自动打回 ${step.stage} 重做。`]);
+            setChatLines((lines) => [...lines, formatWorkflowNodeFailureForChat(failure), `ORCH：已自动打回 ${step.stage} 重做。`]);
             setLogLines((lines) => [...lines, `产物闸门：${retryNote}`, `回滚目标：${step.owner} / ${step.stage}`]);
             runtime = { ...runtime, upstream: retryUpstream, nextIndex: stepIndex, artifactRetries: { ...(runtime.artifactRetries ?? {}), [retryKey]: retryCount + 1 } };
             stepIndex -= 1;
             continue;
           }
-          throw new Error(`${step.owner} / ${step.stage} 未生成有效非空代码产物；QA 无法执行真实测试。请让 DEV 输出带 FILE 标记且内容非空的代码块，例如 <!-- FILE: index.html -->。${artifactSave.ok ? "" : ` 保存错误：${artifactSave.message}`}`);
+          const finalArtifactMessage = `${step.owner} / ${step.stage} 未生成有效非空代码产物；QA 无法执行真实测试。请让 DEV 输出带 FILE 标记且内容非空的代码块，例如 <!-- FILE: index.html -->。${artifactSave.ok ? "" : ` 保存错误：${artifactSave.message}`}`;
+          recordWorkflowNodeFailure(step, finalArtifactMessage, "artifact_missing");
+          throw new Error(finalArtifactMessage);
         }
+        await rememberOrionProcess(createOrionWorkflowNodeMemoryEntry({
+          task: runtime.task,
+          owner: result.owner,
+          stage: result.stage,
+          output: result.output,
+          status: "done",
+          archivePath: runtime.archive?.path,
+          artifactPaths: extractRecentArtifactPaths({
+            taskArchive: runtime.archive,
+            artifactOutputDir: appSettings.artifact_output_dir,
+            memoryEntries: orionMemoryEntriesRef.current,
+            chatLines,
+            logLines,
+          }),
+        }), runtime.archive, runtime.task);
         setWorkflowMetrics((metrics) => metrics.map((metric) => metric.stage === step.stage && metric.owner === step.owner && metric.status === "running" ? {
           stage: result.stage,
           owner: result.owner,
@@ -1605,7 +2747,79 @@ function App() {
         } : metric));
         setChatLines((lines) => [...lines, `${step.owner}：${step.stage} 节点完成，耗时 ${formatDuration(result.elapsed_ms)}，已通知 ORCH。`, `ORCH：收到 ${step.owner} 产物，准备推进下一节点。`]);
         setLogLines((lines) => [...lines, `${step.owner} -> ORCH: 节点完成`, `返回地址：${result.endpoint}`, `节点统计：耗时 ${formatDuration(result.elapsed_ms)} / input ${result.input_tokens || "未返回"} / output ${result.output_tokens || "未返回"} / total ${result.total_tokens || "未返回"}`, `产物预览：${previewOutput(result.output)}`]);
-        const suggestions = monitorOrionNodeResult({ task: runtime.task, step, output: result.output });
+        const modelObservation = await runOrionWorkflowObserver(runtime.task, step, result.output);
+        const observedRuntime = {
+          ...runtime,
+          upstream: trimWorkflowContext(modelObservation ? appendOrionObservationToUpstream(nextUpstream, modelObservation) : nextUpstream),
+          nextIndex: stepIndex + 1,
+        };
+        if (modelObservation) {
+          await rememberOrionProcess(createOrionWorkflowObservationMemoryEntry({
+            task: runtime.task,
+            owner: step.owner,
+            stage: step.stage,
+            observation: modelObservation,
+            archivePath: runtime.archive?.path,
+          }), runtime.archive, runtime.task);
+          setLogLines((lines) => [
+            ...lines,
+            `ORION workflow observer: ${modelObservation.decision} confidence=${modelObservation.confidence}`,
+            modelObservation.summary,
+            ...(modelObservation.memory_note ? [`ORION observer memory note: ${modelObservation.memory_note}`] : []),
+          ]);
+          if (observationRequiresUserInput(modelObservation)) {
+            pausedForObservation = true;
+            setWorkflowRunning(false);
+            setCurrentActivity(`等待 ORION 观察确认：${step.owner} / ${step.stage}`);
+            setOrionObservationGate({ step, stepIndex, runtime: observedRuntime, observation: modelObservation });
+            setChatLines((lines) => [...lines, `ORION：${formatOrionObservationPrompt(modelObservation)}`]);
+            return;
+          }
+          if (observationRequestsRerun(modelObservation)) {
+            const targetIndex = orionObservationRerunIndex(modelObservation, stepIndex, runtime.enabledSteps);
+            const targetStep = runtime.enabledSteps[targetIndex] ?? step;
+            const retryKey = `${targetStep.owner}/${targetStep.stage}`;
+            const retryCount = runtime.observationRetries?.[retryKey] ?? 0;
+            if (retryCount < 1) {
+              setWorkflowMetrics((metrics) => metrics.map((metric) => metric.stage === targetStep.stage && metric.owner === targetStep.owner ? { ...metric, status: "failed", output_preview: modelObservation.rerun_instruction || modelObservation.summary } : metric));
+              setChatLines((lines) => [...lines, `ORION：${modelObservation.user_message || modelObservation.summary} 我会带着这条观察回到 ${targetStep.owner} / ${targetStep.stage} 重跑一次。`]);
+              setLogLines((lines) => [...lines, `ORION observation rerun: ${targetStep.owner} / ${targetStep.stage}`, modelObservation.rerun_instruction || modelObservation.summary]);
+              runtime = {
+                ...runtime,
+                upstream: trimWorkflowContext(appendOrionObservationRerunToUpstream(upstreamBeforeStep, modelObservation)),
+                nextIndex: targetIndex,
+                observationRetries: { ...(runtime.observationRetries ?? {}), [retryKey]: retryCount + 1 },
+              };
+              stepIndex = targetIndex - 1;
+              continue;
+            }
+            pausedForObservation = true;
+            setWorkflowRunning(false);
+            setCurrentActivity(`等待 ORION 重跑确认：${targetStep.owner} / ${targetStep.stage}`);
+            setOrionObservationGate({
+              step: targetStep,
+              stepIndex: targetIndex,
+              runtime: observedRuntime,
+              observation: {
+                ...modelObservation,
+                decision: "ask_user",
+                user_message: `ORION 已经自动重跑过 ${targetStep.owner} / ${targetStep.stage} 一次，但模型仍建议重跑。请确认是继续推进，还是补充新的处理意见。`,
+              },
+            });
+            setChatLines((lines) => [...lines, "ORION：这个节点已经按观察结果自动重跑过一次，我先暂停，避免陷入循环。请回复继续推进或给出新的处理意见。"]);
+            return;
+          }
+          if (shouldSurfaceOrionWorkflowObservation(modelObservation)) {
+            setChatLines((lines) => [...lines, `ORION：${modelObservation.user_message || modelObservation.summary}`]);
+          }
+        }
+        const suggestions = shouldRunFallbackOrionNodeMonitor(modelObservation ?? createFallbackOrionWorkflowObservation({
+          owner: step.owner,
+          stage: step.stage,
+          reason: "workflow observer returned no observation",
+        }))
+          ? monitorOrionNodeResult({ task: runtime.task, step, output: result.output })
+          : [];
         setOrionSuggestions((items) => [...suggestions, ...items].slice(0, 8));
         const activeSuggestions = suggestions.filter((suggestion) => suggestion.kind !== "continue");
         if (activeSuggestions.length > 0) {
@@ -1617,7 +2831,7 @@ function App() {
         if (step.stage === "Retrospective") {
           proposeMemoryRuleCandidate(result.output, runtime.archive, step.stage);
         }
-        runtime = { ...runtime, upstream: nextUpstream, nextIndex: stepIndex + 1 };
+        runtime = observedRuntime;
         if (shouldStopWorkflow(workflowStopRequestedRef)) {
           stoppedByUser = true;
           break;
@@ -1640,12 +2854,40 @@ function App() {
         lastStoppedWorkflowRef.current = { task: runtime.task, at: Date.now() };
         const summaryText = `# Retrospective\n\n- 状态: stopped\n- 停止位置: ${stoppedAt}\n- 总耗时: ${formatDuration(wallElapsed)}\n- 节点累计耗时: ${formatDuration(runtime.runTotals.elapsed_ms)}\n\nORCH：用户手动终止流程，后续节点未继续推进。\n`;
         await tryFinishTaskArchive(runtime.archive, "stopped", wallElapsed, runtime.runTotals, summaryText);
+        await rememberOrionProcess(createOrionWorkflowRunMemoryEntry({
+          task: runtime.task,
+          status: "stopped",
+          message: summaryText,
+          archivePath: runtime.archive?.path,
+          artifactPaths: extractRecentArtifactPaths({ taskArchive: runtime.archive, artifactOutputDir: appSettings.artifact_output_dir, memoryEntries: orionMemoryEntriesRef.current, chatLines, logLines }),
+        }), runtime.archive, runtime.task);
+        await rememberOrionWorkflowSummary({
+          task: runtime.task,
+          status: "stopped",
+          summaryText,
+          upstream: runtime.upstream,
+          archive: runtime.archive,
+        });
         setChatLines((lines) => [...lines, `ORCH：流程已终止，停止位置：${stoppedAt}。`]);
         setLogLines((lines) => [...lines, `流程已由用户终止：${stoppedAt}`]);
         return;
       }
       const summaryText = `# Retrospective\n\n- 状态: completed\n- 总耗时: ${formatDuration(wallElapsed)}\n- 节点累计耗时: ${formatDuration(runtime.runTotals.elapsed_ms)}\n- input tokens: ${runtime.runTotals.input_tokens || "未返回"}\n- output tokens: ${runtime.runTotals.output_tokens || "未返回"}\n- total tokens: ${runtime.runTotals.total_tokens || "未返回"}\n\nORCH：全部流程节点已完成，PM 已按交付总结规则汇总 DEV 改动、产物、原文件修改和 QA 覆盖结论。\n`;
       await tryFinishTaskArchive(runtime.archive, "completed", wallElapsed, runtime.runTotals, summaryText);
+      await rememberOrionProcess(createOrionWorkflowRunMemoryEntry({
+        task: runtime.task,
+        status: "completed",
+        message: `${summaryText}\n\n${runtime.upstream}`,
+        archivePath: runtime.archive?.path,
+        artifactPaths: extractRecentArtifactPaths({ taskArchive: runtime.archive, artifactOutputDir: appSettings.artifact_output_dir, memoryEntries: orionMemoryEntriesRef.current, chatLines, logLines }),
+      }), runtime.archive, runtime.task);
+      await rememberOrionWorkflowSummary({
+        task: runtime.task,
+        status: "completed",
+        summaryText,
+        upstream: runtime.upstream,
+        archive: runtime.archive,
+      });
       setChatLines((lines) => [...lines, `ORCH：全部流程节点已完成，总耗时 ${formatDuration(wallElapsed)}，PM 已汇总 DEV 改动、产物、原文件修改和 QA 覆盖结论。`]);
       setLogLines((lines) => [...lines, `ORCH：全部流程节点已完成。总耗时 ${formatDuration(wallElapsed)}，节点累计 ${formatDuration(runtime.runTotals.elapsed_ms)}，Token input ${runtime.runTotals.input_tokens || "未返回"} / output ${runtime.runTotals.output_tokens || "未返回"} / total ${runtime.runTotals.total_tokens || "未返回"}。`]);
     } catch (runError) {
@@ -1653,16 +2895,32 @@ function App() {
       const failedAt = activeStep ? `${activeStep.owner} / ${activeStep.stage}` : "未知节点";
       const wallElapsed = Date.now() - runtime.workflowStart;
       setError(message);
+      const failure = recordWorkflowNodeFailure(activeStep, message);
       if (activeStep) {
         setWorkflowMetrics((metrics) => metrics.map((metric) => metric.stage === activeStep?.stage && metric.owner === activeStep.owner && metric.status === "running" ? { ...metric, status: "failed", output_preview: message } : metric));
       }
-      setChatLines((lines) => [...lines, `ORCH：流程在 ${failedAt} 调用失败，已停止推进。`, "ORCH：失败详情已放到右侧输出，可以据此排查 Provider、地址、代理或模型服务。"]);
+      setChatLines((lines) => [...lines, formatWorkflowNodeFailureForChat(failure), "ORCH：失败详情已放到右侧输出，可以据此排查或决定回滚重做。"]);
       setLogLines((lines) => [...lines, `流程执行失败节点：${failedAt}`, `流程执行失败：${message}`]);
-      await tryFinishTaskArchive(runtime.archive, "failed", wallElapsed, runtime.runTotals, `# Retrospective\n\n- 状态: failed\n- 失败节点: ${failedAt}\n- 总耗时: ${formatDuration(wallElapsed)}\n\n${message}\n`);
+      const summaryText = `# Retrospective\n\n- 状态: failed\n- 失败节点: ${failedAt}\n- 总耗时: ${formatDuration(wallElapsed)}\n\n${message}\n`;
+      await tryFinishTaskArchive(runtime.archive, "failed", wallElapsed, runtime.runTotals, summaryText);
+      await rememberOrionProcess(createOrionWorkflowRunMemoryEntry({
+        task: runtime.task,
+        status: "failed",
+        message: summaryText,
+        archivePath: runtime.archive?.path,
+        artifactPaths: extractRecentArtifactPaths({ taskArchive: runtime.archive, artifactOutputDir: appSettings.artifact_output_dir, memoryEntries: orionMemoryEntriesRef.current, chatLines, logLines }),
+      }), runtime.archive, runtime.task);
+      await rememberOrionWorkflowSummary({
+        task: runtime.task,
+        status: "failed",
+        summaryText,
+        upstream: runtime.upstream,
+        archive: runtime.archive,
+      });
     } finally {
       setWorkflowRunning(false);
       workflowStopRequestedRef.current = false;
-      if (!pausedForApproval && !pausedForClarification) setCurrentActivity("");
+      if (!pausedForApproval && !pausedForClarification && !pausedForObservation) setCurrentActivity("");
     }
   }
 
@@ -1705,6 +2963,43 @@ function App() {
     setWorkflows(result.workflows);
     setActiveWorkflowId(result.activeWorkflowId);
     setContextMenu(null);
+  }
+
+  async function copyChatMessage(text: string, messageKey: string) {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const textArea = document.createElement("textarea");
+        textArea.value = text;
+        textArea.setAttribute("readonly", "");
+        textArea.style.position = "fixed";
+        textArea.style.left = "-9999px";
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand("copy");
+        document.body.removeChild(textArea);
+      }
+      setCopiedMessageKey(messageKey);
+      window.setTimeout(() => {
+        setCopiedMessageKey((current) => current === messageKey ? "" : current);
+      }, 1400);
+      setLogLines((lines) => [...lines, "已复制对话消息。"]);
+    } catch (copyError) {
+      const message = copyError instanceof Error ? copyError.message : String(copyError);
+      setLogLines((lines) => [...lines, `复制对话消息失败：${message}`]);
+    }
+  }
+
+  function renderCopyMessageButton(text: string, messageKey: string) {
+    const copied = copiedMessageKey === messageKey;
+    return <button
+      type="button"
+      className={`copy-message-button${copied ? " copied" : ""}`}
+      aria-label={copied ? "已复制" : "复制这条消息"}
+      title={copied ? "已复制" : "复制"}
+      onClick={() => { void copyChatMessage(text, messageKey); }}
+    >{copied ? "✓" : "⧉"}</button>;
   }
 
   function removeWorkflow(workflowId = activeWorkflowId) {
@@ -1780,9 +3075,9 @@ function App() {
   }
 
   function renderOrionActionPayload(action: OrionAction) {
-    if (action.risk !== "strong-confirm") return null;
+    if (action.risk === "direct") return null;
     return <div className="orion-action-payload">
-      {formatOrionPayloadPreview(action.payload).map(([key, value]) => <p key={`${action.id}-${key}`}><span>{key}</span><em>{value}</em></p>)}
+      {formatOrionToolPayloadPreview(action).map(([key, value]) => <p key={`${action.id}-${key}`}><span>{key}</span><em>{value}</em></p>)}
     </div>;
   }
 
@@ -1851,6 +3146,7 @@ function App() {
       <header>
         <div><strong>任务进度</strong><span>ORION 临时任务</span></div>
         <em>{doneCount}/{run.steps.length}</em>
+        <button type="button" className="activity-float-toggle" aria-label="收纳任务进度" onClick={() => setActivityFloatExpanded(false)}><span aria-hidden="true"></span></button>
       </header>
       <div className="workflow-progress-list">
         {run.steps.map((step) => <article className={`workflow-progress-step ${step.status}`} key={step.id}>
@@ -1866,10 +3162,11 @@ function App() {
     return `\n\n[ORION 转交给 ${step.owner} / ${step.stage} 的补充指令]\n${step.orion_notes.map((note) => `- ${note}`).join("\n")}`;
   }
 
-  const shellClassName = inspectorCollapsed ? "app-shell inspector-collapsed" : "app-shell";
+  const shellBaseClassName = inspectorCollapsed ? "app-shell inspector-collapsed" : "app-shell";
   const shouldShowWorkflowProgressFloat = workflowMetrics.length > 0
     && inspectorCollapsed
     && !approvalGate
+    && !orionObservationGate
     && !configPanel
     && !orionPendingPlan
     && !orionPendingAssistant
@@ -1884,9 +3181,26 @@ function App() {
     hasPendingAssistant: Boolean(orionPendingAssistant),
     hasPendingMemoryCandidate: Boolean(pendingMemoryCandidate),
   });
+  const shouldShowAnyActivityFloat = shouldShowWorkflowProgressFloat || (shouldShowActivityFloat && Boolean(orionActivityRun));
+  const shellClassName = `${shellBaseClassName}${shouldShowAnyActivityFloat ? " has-activity-float" : ""}`;
+  const activityFloatCollapsedSummary = shouldShowActivityFloat && orionActivityRun
+    ? activityFloatSummary({
+      title: "任务进度",
+      subtitle: "ORION 临时任务",
+      done: orionActivityDoneCount,
+      total: orionActivityTotal,
+      active: activityFloatActive,
+    })
+    : activityFloatSummary({
+      title: "流程进度",
+      subtitle: activeWorkflow?.name ?? "ORION 自动判断",
+      done: workflowDoneCount,
+      total: workflowProgressTotal,
+      active: activityFloatActive,
+    });
 
   return (
-    <main className={shellClassName} onClick={() => { setContextMenu(null); setWorkflowMenuOpen(false); }}>
+    <main className={shellClassName} onClick={() => { setContextMenu(null); setWorkflowMenuOpen(false); setAccessModeMenuOpen(false); }}>
       <aside className="sidebar">
         <div className="sidebar-kicker">WORKSPACES</div>
         <nav className="sidebar-nav" aria-label="主导航">
@@ -1934,22 +3248,30 @@ function App() {
         <header className="workspace-topbar">
           <div className="workspace-session">
             <span>ORX</span>
-            <em>{activeWorkflow?.name ?? "Workflow"}</em>
+            <em>{activeWorkflow?.name ?? "ORION 自动判断"}</em>
           </div>
         </header>
         <section className="terminal-log" aria-label="ORCH 对话">
           <div className="flow-column" aria-label="系统输出流">
-            {chatTimelineItems.map((item, index) => item.side === "user"
-              ? <article className="user-message-row" key={`chat-${item.text}-${index}`}><div className="user-message-bubble">{item.text}</div></article>
-              : <p className={item.tone === "error" ? "error-line" : "system-line"} key={`chat-${item.text}-${index}`}><span>$</span><span className="line-text">{item.text}</span></p>
-            )}
-            {(workflowRunning || approvalGate || clarificationGate || orionAssistantRunning) && <p className="thinking-line" aria-live="polite"><span>$</span><span className="thinking-content">{orionAssistantRunning ? assistantActivityLine(orionAssistantActionCount) : currentActivity || "ORCH 处理中"}{(workflowRunning || orionAssistantRunning) && <><i></i><i></i><i></i></>}</span></p>}
+            {chatTimelineItems.map((item, index) => {
+              const messageKey = `chat-${item.side}-${index}`;
+              return item.side === "user"
+                ? <article className="user-message-row" key={`chat-${item.text}-${index}`} onMouseLeave={() => setCopiedMessageKey((current) => current === messageKey ? "" : current)}><div className="user-message-bubble"><span>{item.text}</span></div><div className="message-copy-actions">{renderCopyMessageButton(item.text, messageKey)}</div></article>
+                : <p className={item.tone === "error" ? "error-line" : "system-line"} key={`chat-${item.text}-${index}`} onMouseLeave={() => setCopiedMessageKey((current) => current === messageKey ? "" : current)}><span>$</span><span className="line-text"><span>{item.text}</span></span><span className="message-copy-actions">{renderCopyMessageButton(item.text, messageKey)}</span></p>;
+            })}
+            {(workflowRunning || approvalGate || clarificationGate || orionObservationGate || orionAssistantRunning || orionChatRunning) && <p className="thinking-line" aria-live="polite"><span>$</span><span className="thinking-content">{orionChatRunning ? "ORION 正在等待模型回复" : orionAssistantRunning ? assistantActivityLine(orionAssistantActionCount) : currentActivity || "ORCH 处理中"}{(workflowRunning || orionAssistantRunning || orionChatRunning) && <><i></i><i></i><i></i></>}</span></p>}
           </div>
         </section>
-        {shouldShowWorkflowProgressFloat && <aside className="workflow-progress-float" aria-label="流程流转进度">
+        {shouldShowAnyActivityFloat && !activityFloatExpanded && <button type="button" className="workflow-progress-float collapsed" aria-label="展开流程流转进度" aria-expanded={false} onClick={() => setActivityFloatExpanded(true)}>
+          <span>{activityFloatCollapsedSummary.title}</span>
+          <strong>{activityFloatCollapsedSummary.progress}</strong>
+          <em>{activityFloatCollapsedSummary.status === "运行中" ? "运行中" : activityFloatCollapsedSummary.subtitle}</em>
+        </button>}
+        {shouldShowWorkflowProgressFloat && activityFloatExpanded && <aside className="workflow-progress-float expanded" aria-label="流程流转进度">
           <header>
-            <div><strong>流程进度</strong><span>{activeWorkflow?.name ?? "Workflow"}</span></div>
-            <em>{workflowProgressSteps.filter((step) => step.status === "done").length}/{workflowProgressSteps.length}</em>
+            <div><strong>流程进度</strong><span>{activeWorkflow?.name ?? "ORION 自动判断"}</span></div>
+            <em>{workflowDoneCount}/{workflowProgressSteps.length}</em>
+            <button type="button" className="activity-float-toggle" aria-label="收纳流程进度" onClick={() => setActivityFloatExpanded(false)}><span aria-hidden="true"></span></button>
           </header>
           <div className="workflow-progress-list">
             {workflowProgressSteps.map((step) => <article className={`workflow-progress-step ${step.status}`} key={`${step.owner}-${step.stage}-${step.index}`}>
@@ -1958,7 +3280,7 @@ function App() {
             </article>)}
           </div>
         </aside>}
-        {shouldShowActivityFloat && orionActivityRun && <aside className="workflow-progress-float orion-activity-float" aria-label="ORION 临时任务轨迹">
+        {shouldShowActivityFloat && orionActivityRun && activityFloatExpanded && <aside className="workflow-progress-float orion-activity-float expanded" aria-label="ORION 临时任务轨迹">
           {renderOrionActivityFloat(orionActivityRun)}
         </aside>}
         <form
@@ -1989,7 +3311,7 @@ function App() {
             <p>{orionRiskLabel(highestOrionRisk(orionPendingAssistant.actions))} · {actionRiskSummary(orionPendingAssistant.actions)}</p>
             <div className="orion-permission-options">
               <button type="button" onClick={() => { void approveOrionPendingAssistant(); }}>允许本次</button>
-              <button type="button" className="danger-button" onClick={() => rejectOrionPendingAssistant()}>驳回</button>
+              <button type="button" className="danger-button" onClick={() => { void rejectOrionPendingAssistant(); }}>驳回</button>
             </div>
           </section>}
           {pendingMemoryCandidate && <section className="memory-candidate-request" aria-label="长期记忆候选">
@@ -2021,12 +3343,22 @@ function App() {
               <button type="button" aria-label={`移除附件 ${attachment.name}`} onClick={() => removePendingAttachment(attachment.id)}>×</button>
             </div>)}
           </div>}
-          <textarea value={requirement} disabled={orionAssistantRunning} placeholder={orionAssistantRunning ? "ORION 正在执行本机助手动作" : clarificationGate ? "直接回答 Trellis 的澄清问题" : "告诉 ORION 你想做什么，或粘贴/拖入文件"} onPaste={handleComposerPaste} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} onChange={(event) => setRequirement(event.target.value)} aria-label="需求描述" />
+          <textarea value={requirement} disabled={orionAssistantRunning || orionChatRunning} placeholder={orionChatRunning ? "ORION 正在等待模型回复" : orionAssistantRunning ? "ORION 正在执行本机助手动作" : orionObservationGate ? "回复 ORION 的观察问题，或输入“继续”推进" : clarificationGate ? "直接回答 Trellis 的澄清问题" : "告诉 ORION 你想做什么，或粘贴/拖入文件"} onPaste={handleComposerPaste} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} onChange={(event) => setRequirement(event.target.value)} aria-label="需求描述" />
           <div className="composer-toolbar">
             <div className="template-picker" onClick={(event) => event.stopPropagation()}>
-              <button type="button" aria-haspopup="listbox" aria-expanded={workflowMenuOpen} onClick={() => setWorkflowMenuOpen((open) => !open)}>{activeWorkflow?.name ?? "选择工作流"}</button>
+              <button type="button" aria-haspopup="listbox" aria-expanded={workflowMenuOpen} onClick={() => setWorkflowMenuOpen((open) => !open)}>{activeWorkflow?.name ?? "ORION 自动判断"}</button>
               {workflowMenuOpen && <div className="template-menu" role="listbox">
+                <button type="button" role="option" aria-selected={!activeWorkflowId} onClick={() => { setActiveWorkflowId(""); setWorkflowMenuOpen(false); }}>ORION 自动判断</button>
                 {workflows.map((workflow) => <button type="button" role="option" aria-selected={activeWorkflowId === workflow.id} key={workflow.id} onClick={() => { setActiveWorkflowId(workflow.id); setWorkflowMenuOpen(false); }}>{workflow.name}{workflow.isDefault ? " · 默认" : ""}</button>)}
+              </div>}
+            </div>
+            <div className="access-mode-picker" onClick={(event) => event.stopPropagation()}>
+              <button type="button" aria-haspopup="listbox" aria-expanded={accessModeMenuOpen} onClick={() => setAccessModeMenuOpen((open) => !open)}><span>◎</span>{accessModeOption.label}</button>
+              {accessModeMenuOpen && <div className="access-mode-menu" role="listbox">
+                {orionAccessModeOptions.map((option) => <button type="button" role="option" aria-selected={orionAccessMode === option.id} key={option.id} onClick={() => { setOrionAccessMode(option.id); setAccessModeMenuOpen(false); }}>
+                  <span>{option.label}</span>
+                  <em>{option.description}</em>
+                </button>)}
               </div>}
             </div>
             <button type="submit" className={composerButtonState.className} disabled={composerButtonState.disabled} aria-label={composerButtonState.ariaLabel} title={composerButtonState.title}>{composerButtonState.content}</button>
@@ -2062,6 +3394,12 @@ function App() {
           </details>}
           {approvalGate && <article className="approval-hint"><strong>等待审批</strong><span>{approvalGate.step.owner} / {approvalGate.step.stage}</span><p>审批预览已在中间弹窗打开。</p></article>}
           {clarificationGate && <article className="approval-hint"><strong>等待澄清</strong><span>{clarificationGate.step.owner} / {clarificationGate.step.stage}</span><p>Trellis 正在追问需求，直接回复即可。</p></article>}
+          {orionObservationGate && <article className="approval-hint"><strong>等待 ORION 观察确认</strong><span>{orionObservationGate.step.owner} / {orionObservationGate.step.stage}</span><p>{formatOrionObservationPrompt(orionObservationGate.observation)}</p></article>}
+          {workflowNodeFailure && <article className={`workflow-failure-card ${workflowNodeFailure.kind}`}>
+            <header><strong>{workflowNodeFailure.title}</strong><span>{workflowNodeFailure.owner} / {workflowNodeFailure.stage}</span></header>
+            <p>{workflowNodeFailure.summary}</p>
+            <small>{workflowNodeFailure.recovery}</small>
+          </article>}
           {taskArchive && <p>task archive: {taskArchive.path}</p>}
           {workflowMetrics.length > 0 && <article className="output-focus-card">
             <header><strong>当前流程摘要</strong><span>{workflowMetrics.filter((metric) => metric.status === "done").length}/{workflowProgressSteps.length} done</span></header>
@@ -2162,6 +3500,14 @@ function App() {
           {configPanel === "workflow" && <div className="workflow-manager config-content">
             <aside className="workflow-list-panel">
               <div className="workflow-list">
+                <button
+                  type="button"
+                  className={!activeWorkflowId ? "active" : ""}
+                  onClick={() => setActiveWorkflowId("")}
+                >
+                  <span>ORION 自动判断</span>
+                  <em>不预选流程</em>
+                </button>
                 {workflows.map((workflow) => <button
                   type="button"
                   className={workflow.id === activeWorkflowId ? "active" : ""}
@@ -2182,7 +3528,11 @@ function App() {
               </div>
             </aside>
             <section className="flow-list">
-              <div className="workflow-meta">
+              {!activeWorkflow && <article className="workflow-empty-state">
+                <strong>当前不预选工作流</strong>
+                <p>默认由 ORION 判断任务：本机助手任务不会进入 ORCH；明确的 Bug、测试或完整开发任务仍可自动切换到对应流程。</p>
+              </article>}
+              {activeWorkflow && <><div className="workflow-meta">
                 <label><span>工作流名称</span><input value={activeWorkflow?.name ?? ""} onChange={(event) => updateActiveWorkflow({ name: event.target.value })} /></label>
                 <label><span>说明</span><textarea value={activeWorkflow?.description ?? ""} onChange={(event) => updateActiveWorkflow({ description: event.target.value })} /></label>
               </div>
@@ -2192,13 +3542,57 @@ function App() {
                 <div className="inline-grid"><label><span>阶段</span><select value={`${step.owner}/${step.stage}`} onChange={(event) => { const option = stageOptions.find((item) => `${item.owner}/${item.stage}` === event.target.value); if (option) updateWorkflowStep(index, { stage: option.stage, owner: option.owner }); }}>{stageOptions.map((option) => <option key={`${option.owner}/${option.stage}`} value={`${option.owner}/${option.stage}`}>{option.label}</option>)}</select></label><label><span>负责人</span><select value={step.owner} onChange={(event) => updateWorkflowStep(index, { owner: event.target.value })}>{agentOwners.map((owner) => <option key={owner} value={owner}>{owner}</option>)}</select></label></div>
                 <label><span>执行说明</span><textarea value={step.instruction} onChange={(event) => updateWorkflowStep(index, { instruction: event.target.value })} /></label>
                 <div className="inline-grid"><label><span>交付确认</span><select value={step.approval ?? "none"} onChange={(event) => updateWorkflowStep(index, { approval: event.target.value as WorkflowStep["approval"] })}>{Object.entries(approvalLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><label><span>失败打回</span><select value={step.rollback_target ?? ""} onChange={(event) => updateWorkflowStep(index, { rollback_target: event.target.value || undefined })}><option value="">不打回</option>{steps.map((targetStep) => <option key={targetStep.stage} value={targetStep.stage}>{targetStep.stage}</option>)}</select></label></div>
-              </article>)}
+              </article>)}</>}
             </section>
           </div>}
           {configPanel === "settings" && <div className="settings-panel config-content">
             <section className="settings-group"><h3>产物存放</h3><div className="setting-row"><span>总目录</span><em>{appSettings.artifact_output_dir || "未设置，默认只保存到任务归档目录"}</em></div><div className="settings-actions"><button type="button" onClick={chooseArtifactOutputDir}>选择总目录</button><button type="button" onClick={() => { const nextSettings = { ...appSettings, artifact_output_dir: "" }; setAppSettings(nextSettings); void saveAppSettings(nextSettings); }}>清空目录</button></div><div className="setting-row"><span>自动分类</span><em>运行时会自动创建 task-id/pd、task-id/dev、task-id/arch、task-id/qa、task-id/pm 子目录。</em></div></section>
             <section className="settings-group"><h3>日志与诊断</h3><div className="setting-row"><span>页面日志</span><em>主窗口中间终端区 / 右侧输出面板</em></div><div className="setting-row"><span>开发运行日志</span><em>运行 npm --cache D:\npm-cache run tauri -- dev 的 PowerShell 终端</em></div><div className="setting-row"><span>计划中的本地日志</span><em>%APPDATA%\ORX\logs\app.log</em></div></section>
+            <section className="settings-group orion-tool-catalog-group">
+              <header>
+                <div><h3>ORION 工具目录</h3><span>{orionToolCatalogRows.length} 个已接入工具</span></div>
+              </header>
+              <div className="orion-tool-catalog-list">
+                {orionToolCatalogRows.map((tool) => <article className={`orion-tool-catalog-row ${tool.risk}`} key={tool.kind}>
+                  <div><strong>{tool.kind}</strong><em>{orionRiskLabel(tool.risk)}</em></div>
+                  <p>{tool.purpose}</p>
+                  <small>必填：{tool.required} · 参数：{tool.schema}</small>
+                </article>)}
+              </div>
+            </section>
+            <section className="settings-group capability-gap-group">
+              <header>
+                <div><h3>ORION 能力缺口</h3><span>{orionCapabilityGaps.length > 0 ? `${orionCapabilityGaps.length} 类待补工具` : "暂无记录"}</span></div>
+                <button type="button" onClick={() => setOrionCapabilityGaps([])} disabled={orionCapabilityGaps.length === 0}>清空</button>
+              </header>
+              {orionCapabilityGaps.length === 0
+                ? <p className="capability-gap-empty">当 AI 提出 ORX 暂不支持的工具时，这里会记录能力名、替代工具和最近触发任务。</p>
+                : <div className="capability-gap-list">
+                  {orionCapabilityGaps.slice().reverse().map((gap) => <article className="capability-gap-row" key={gap.id}>
+                    <div><strong>{gap.toolKind}</strong><em>{gap.alternative || "暂无替代工具"}</em></div>
+                    <p>{gap.latestTask || "未记录任务"}</p>
+                    <p className={`capability-gap-recommendation ${gap.recommendation.kind}`}><strong>{gap.recommendation.title}</strong><span>{gap.recommendation.actionLabel}</span></p>
+                    <small>{gap.recommendation.detail}</small>
+                    <small>{gap.reason} · {gap.count} 次{gap.payloadPreview ? ` · ${gap.payloadPreview}` : ""}</small>
+                  </article>)}
+                </div>}
+            </section>
             <section className="settings-group"><h3>运行环境</h3><div className="setting-row"><span>Tauri command</span><em>{canUseTauriCommands() ? "可用，当前在客户端中运行" : "不可用，当前是浏览器预览"}</em></div><div className="setting-row"><span>Provider 测试</span><em>需要 Tauri 客户端和 API Key 环境变量</em></div><div className="setting-row"><span>ORCH 巡检</span><em>实时巡检：节点完成后立即推进；失败时立即停止并输出诊断。</em></div><div className="setting-row"><span>角色代号</span><em>ORCH=调度器，PM=流程管理 Agent，PD=产品，DEV=开发，ARCH=架构师，QA=测试。</em></div></section>
+            <section className="settings-group orion-skill-group">
+              <header>
+                <div><h3>ORION Skills / SOP</h3><span>{orionSkills.length > 0 ? `${orionSkills.length} 个已沉淀技能` : "暂无技能"}</span></div>
+                <button type="button" onClick={() => setOrionSkills([])} disabled={orionSkills.length === 0}>清空</button>
+              </header>
+              {orionSkills.length === 0
+                ? <p className="capability-gap-empty">ORION 完成本机助手任务后，会把成功的工具路径沉淀为可复用 SOP，后续规划时优先参考。</p>
+                : <div className="orion-skill-list">
+                  {orionSkills.slice().reverse().map((skill) => <article className={`orion-skill-row ${orionSkillMaturity(skill)}`} key={skill.id}>
+                    <div><strong>{skill.title}</strong><em>{orionSkillMaturityLabel(skill)} · {orionSkillTrainingEventLabel(skill.lastTrainingEvent)} · 复用 {skill.uses} 次</em></div>
+                    <p>{skill.actionKinds.join(" -> ")}</p>
+                    <small>{skill.resultSummary}</small>
+                  </article>)}
+                </div>}
+            </section>
             <section className="settings-group"><h3>密钥读取</h3><div className="setting-row"><span>当前引用名</span><em>{providerForm.api_key_ref}</em></div><div className="setting-row"><span>读取顺序</span><em>先读环境变量，读不到再读用户密钥文件</em></div><div className="setting-row"><span>密钥文件</span><em>%APPDATA%\ORX\secrets.json</em></div><div className="setting-row"><span>后续增强</span><em>迁移到系统 keychain，避免明文文件</em></div></section>
           </div>}
         </section>

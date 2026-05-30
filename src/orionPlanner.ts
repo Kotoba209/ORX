@@ -48,6 +48,9 @@ const trustedInstallPackages = [
 export function classifyOrionIntent(task: string, context: OrionIntentContext = {}): OrionIntentDecision {
   const normalized = task.trim().toLowerCase();
 
+  if (taskLooksLikeWebsiteAnalysis(normalized)) {
+    return { mode: "assistant", reason: "task_mentions_website_analysis" };
+  }
   if (taskLooksLikeSoftwareWork(normalized)) {
     return { mode: "workflow", reason: "task_mentions_software_work" };
   }
@@ -154,6 +157,13 @@ function taskLooksLikeSoftwareWork(task: string) {
   return /(bug|defect|error|exception|failure|failed|fix|crash|implement|feature|develop|code|coding|refactor|test|unit test|integration test|e2e|需求|开发|实现|代码|修改|修复|缺陷|报错|错误|异常|失败|崩溃|测试|重构|页面|组件|接口|模块)/i.test(task);
 }
 
+function taskLooksLikeWebsiteAnalysis(task: string) {
+  const hasWebTarget = /(https?:\/\/|www\.|[\w-]+\.[a-z]{2,}(?:\/|\b)|网站|网页|网址)/i.test(task);
+  const hasAnalysisIntent = /(分析|查看|看看|看一下|读取|抓取|爬取|查询|识别|是什么|技术栈|服务器|html|源码|安全测试|靶场|ctf|渗透|扫描|页面\s*html)/i.test(task);
+  const explicitBuildIntent = /(开发|实现|新增|创建|生成|写一个|做一个|制作).*(页面|网页|组件|功能|表单|html)/i.test(task);
+  return hasWebTarget && hasAnalysisIntent && !explicitBuildIntent;
+}
+
 function taskLooksLikeLocalAssistantWork(task: string) {
   return /(install|setup|download|run|execute|command|shell|script|status|check|lookup|search|read docs|research|client|desktop client|安装|下载|客户端|执行|运行|命令|脚本|状态|查询|查阅|搜索|资料|文档|本机|电脑|环境|打开)/i.test(task);
 }
@@ -163,6 +173,18 @@ function taskLooksLikeInstallWork(task: string) {
 }
 
 function createAssistantActions(task: string) {
+  if (taskLooksLikeExplicitCommandRun(task)) {
+    const command = parseWhitelistedCommandRequest(task);
+    const allowed = commandLooksWhitelisted(command.program, command.args);
+    return [
+      createOrionAction(
+        allowed ? "command.runWhitelisted" : "command.runWorktreeSandbox",
+        allowed ? "Prepare command" : "准备 worktree 沙箱执行",
+        allowed ? `Prepare a local command action for: ${task}` : `命令不在直通白名单内，确认后将在临时 git worktree 沙箱中执行：${command.program} ${command.args.join(" ")}`.trim(),
+        allowed ? { ...command, request: task } : { ...command, request: task, sandbox_required: true, sandbox_kind: "git-worktree" },
+      ),
+    ];
+  }
   if (taskLooksLikeFileWrite(task)) {
     const draft = parseWriteRequest(task);
     const safeGeneratedWrite = taskLooksLikeGeneratedWrite(task) && draft.relative_path && draft.content;
@@ -208,18 +230,6 @@ function createAssistantActions(task: string) {
   }
   if (taskLooksLikeProjectHealthCheck(task)) {
     return projectHealthActions(task);
-  }
-  if (taskLooksLikeExplicitCommandRun(task)) {
-    const command = parseWhitelistedCommandRequest(task);
-    const allowed = commandLooksWhitelisted(command.program, command.args);
-    return [
-      createOrionAction(
-        allowed ? "command.runWhitelisted" : "command.runWorktreeSandbox",
-        allowed ? "Prepare command" : "准备 worktree 沙箱执行",
-        allowed ? `Prepare a local command action for: ${task}` : `命令不在直通白名单内，确认后将在临时 git worktree 沙箱中执行：${command.program} ${command.args.join(" ")}`.trim(),
-        allowed ? { ...command, request: task } : { ...command, request: task, sandbox_required: true, sandbox_kind: "git-worktree" },
-      ),
-    ];
   }
   if (taskLooksLikeVersionCheck(task)) {
     return toolVersionActions(task);

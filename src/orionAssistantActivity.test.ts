@@ -6,6 +6,7 @@ test("composer send state shows loading while ORION assistant action is running"
   const state = composerSendState({
     workflowRunning: false,
     assistantRunning: true,
+    chatRunning: false,
     approvalGate: false,
     clarificationGate: false,
   });
@@ -17,6 +18,22 @@ test("composer send state shows loading while ORION assistant action is running"
   assert.equal(state.content, "");
 });
 
+test("composer send state shows loading while ORION waits for ordinary chat model output", () => {
+  const state = composerSendState({
+    workflowRunning: false,
+    assistantRunning: false,
+    chatRunning: true,
+    approvalGate: false,
+    clarificationGate: false,
+  });
+
+  assert.equal(state.disabled, true);
+  assert.equal(state.className, "assistant-loading-button chat-loading-button");
+  assert.equal(state.ariaLabel, "ORION 正在等待模型回复");
+  assert.equal(state.title, "ORION 正在回复");
+  assert.equal(state.content, "");
+});
+
 test("assistant activity line reports the current action count", () => {
   assert.equal(assistantActivityLine(2), "ORION 正在执行 2 个本机助手动作");
 });
@@ -25,6 +42,7 @@ test("composer send state keeps workflow stop behavior above assistant loading",
   const state = composerSendState({
     workflowRunning: true,
     assistantRunning: true,
+    chatRunning: true,
     approvalGate: false,
     clarificationGate: false,
   });

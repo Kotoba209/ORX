@@ -32,6 +32,12 @@ export function resolveOrionConversationRoute(task: string, context: OrionConver
   }
 
   const routeDecision = recommendWorkflowForTask(normalizedTask, context.workflows, context.activeWorkflowId);
+  if (routeDecision.matchedKind === "current" && !context.activeWorkflowId) {
+    return {
+      kind: "assistant",
+      reason: "no_active_workflow_selected",
+    };
+  }
   return {
     kind: "existing-workflow",
     reason: routeDecision.reason,

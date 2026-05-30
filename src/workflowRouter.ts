@@ -18,7 +18,7 @@ export function recommendWorkflowForTask(task: string, workflows: WorkflowDefini
   const current = workflowById(workflows, currentWorkflowId) ?? defaultWorkflow(workflows);
   const bugFix = workflowById(workflows, "bug-fix");
   const testOnly = workflowById(workflows, "test-only");
-  const full = workflowById(workflows, "full-development") ?? current;
+  const full = workflowById(workflows, "full-development") ?? current ?? workflows[0];
 
   if (testOnly && testOnlyPattern.test(normalizedTask) && !bugFixPattern.test(normalizedTask.replace(/回归测试/g, ""))) {
     return {
@@ -48,7 +48,7 @@ export function recommendWorkflowForTask(task: string, workflows: WorkflowDefini
   }
 
   return {
-    workflow: current,
+    workflow: current ?? full,
     confidence: "low",
     matchedKind: "current",
     reason: "任务类型不够明确，沿用当前选择的工作流，避免过度自动切换。",
@@ -61,5 +61,5 @@ function workflowById(workflows: WorkflowDefinition[], id?: string) {
 }
 
 function defaultWorkflow(workflows: WorkflowDefinition[]) {
-  return workflows.find((workflow) => workflow.isDefault) ?? workflows[0];
+  return workflows.find((workflow) => workflow.isDefault);
 }

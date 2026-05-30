@@ -601,12 +601,14 @@ h2 {
   position: relative;
 }
 
-.template-picker {
+.template-picker,
+.access-mode-picker {
   position: relative;
   min-width: 0;
 }
 
-.template-picker > button {
+.template-picker > button,
+.access-mode-picker > button {
   min-height: 24px;
   border: 0;
   border-radius: 0;
@@ -620,7 +622,16 @@ h2 {
   opacity: 0.9;
 }
 
-.template-picker > button:hover {
+.access-mode-picker > button {
+  gap: 6px;
+}
+
+.access-mode-picker > button span {
+  color: #8b7cff;
+}
+
+.template-picker > button:hover,
+.access-mode-picker > button:hover {
   border: 0;
   background: transparent;
   opacity: 1;
@@ -658,6 +669,50 @@ h2 {
 .template-menu button[aria-selected="true"] {
   border: 0;
   background: #171717;
+}
+
+.access-mode-menu {
+  position: absolute;
+  left: 0;
+  bottom: 38px;
+  z-index: 8;
+  width: min(260px, 78vw);
+  display: grid;
+  gap: 3px;
+  border: 1px solid #2a2a2a;
+  border-radius: 10px;
+  background: #101010;
+  padding: 6px;
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.45);
+}
+
+.access-mode-menu button {
+  display: grid;
+  gap: 3px;
+  width: 100%;
+  min-height: 42px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #f5f5f5;
+  padding: 8px 10px;
+  text-align: left;
+}
+
+.access-mode-menu button:hover,
+.access-mode-menu button[aria-selected="true"] {
+  background: #171717;
+}
+
+.access-mode-menu span {
+  font-weight: 700;
+}
+
+.access-mode-menu em {
+  color: #a3a3a3;
+  font-size: 11px;
+  font-style: normal;
+  line-height: 1.4;
 }
 
 .composer-toolbar > button {
@@ -766,6 +821,137 @@ h2 {
   background: #18181a;
   color: #f4f4f5;
   padding: 0 12px;
+}
+
+.capability-gap-group,
+.orion-skill-group {
+  gap: 12px;
+}
+
+.capability-gap-group > header,
+.orion-tool-catalog-group > header,
+.orion-skill-group > header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.capability-gap-group > header div,
+.orion-tool-catalog-group > header div,
+.orion-skill-group > header div {
+  display: grid;
+  gap: 4px;
+}
+
+.capability-gap-group > header span,
+.orion-tool-catalog-group > header span,
+.orion-skill-group > header span,
+.capability-gap-empty {
+  color: #a3a3a3;
+}
+
+.capability-gap-group > header button,
+.orion-skill-group > header button {
+  min-height: 32px;
+  border: 1px solid #2b2b2d;
+  border-radius: 999px;
+  background: #18181a;
+  color: #f4f4f5;
+  padding: 0 12px;
+}
+
+.capability-gap-group > header button:disabled,
+.orion-skill-group > header button:disabled {
+  opacity: 0.45;
+}
+
+.capability-gap-list {
+  display: grid;
+  gap: 8px;
+  max-height: 260px;
+  overflow: auto;
+}
+
+.capability-gap-list,
+.orion-tool-catalog-list,
+.orion-skill-list {
+  scrollbar-width: thin;
+}
+
+.orion-tool-catalog-list,
+.orion-skill-list {
+  display: grid;
+  gap: 8px;
+  max-height: 320px;
+  overflow: auto;
+}
+
+.capability-gap-row,
+.orion-tool-catalog-row,
+.orion-skill-row {
+  display: grid;
+  gap: 7px;
+  border: 1px solid #2b2b2d;
+  border-radius: 10px;
+  background: #111113;
+  padding: 11px 12px;
+}
+
+.capability-gap-row div,
+.orion-tool-catalog-row div,
+.orion-skill-row div {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: baseline;
+}
+
+.capability-gap-row strong,
+.orion-tool-catalog-row strong,
+.orion-skill-row strong {
+  color: #f4f4f5;
+  font-size: 13px;
+}
+
+.capability-gap-row em,
+.capability-gap-row small,
+.capability-gap-row p,
+.orion-tool-catalog-row em,
+.orion-tool-catalog-row small,
+.orion-tool-catalog-row p,
+.orion-skill-row em,
+.orion-skill-row small,
+.orion-skill-row p {
+  color: #a3a3a3;
+  font-style: normal;
+}
+
+.capability-gap-row p,
+.orion-tool-catalog-row p,
+.orion-skill-row p {
+  margin: 0;
+}
+
+.capability-gap-recommendation {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: 1px solid #312a58;
+  border-radius: 8px;
+  background: #171329;
+  padding: 7px 8px;
+}
+
+.capability-gap-recommendation strong {
+  color: #d9d4ff;
+}
+
+.capability-gap-recommendation span {
+  color: #a59bff;
+  font-size: 11px;
+  white-space: nowrap;
 }
 
 .inline-grid {
@@ -1744,12 +1930,15 @@ body,
 }
 
 .user-message-bubble {
-  display: block;
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
   max-width: min(420px, 48%);
   border: 1px solid #343434;
   border-radius: 18px;
   background: #202020;
-  padding: 12px 15px;
+  padding: 12px 48px 12px 15px;
   color: #f4f4f5;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei UI", sans-serif;
   font-size: 14px;
@@ -1758,6 +1947,11 @@ body,
   text-align: left;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.user-message-bubble > span:first-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .terminal-log p.user-line > span:first-child:not(.line-text) {
@@ -1783,6 +1977,49 @@ body,
 .terminal-log p.system-line .line-text,
 .terminal-log p.error-line .line-text {
   min-width: 0;
+}
+
+.copy-message-button {
+  position: absolute;
+  top: 50%;
+  right: 12px;
+  transform: translateY(-50%);
+  width: 26px;
+  height: 26px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1;
+  opacity: 0;
+  cursor: pointer;
+  transition: opacity 0.16s ease, border-color 0.16s ease, background 0.16s ease, color 0.16s ease;
+}
+
+.line-text:hover .copy-message-button,
+.line-text:focus-within .copy-message-button,
+.user-message-bubble:hover .copy-message-button,
+.user-message-bubble:focus-within .copy-message-button {
+  opacity: 1;
+}
+
+.copy-message-button:hover,
+.copy-message-button:focus-visible,
+.copy-message-button.copied {
+  border-color: var(--border);
+  background: rgba(45, 45, 48, 0.92);
+  color: #f3f4f6;
+  outline: none;
+}
+
+.copy-message-button:hover:not(.copied),
+.copy-message-button:focus-visible:not(.copied) {
+  background: rgba(255, 255, 255, 0.78);
+  color: var(--text-primary);
+  outline: none;
 }
 
 .activity-stream {
@@ -2191,6 +2428,37 @@ body,
   border-color: #3a2a2a;
 }
 
+.workflow-failure-card {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0 12px;
+  border: 1px solid #ffd2d2;
+  border-radius: 10px;
+  background: #fff5f5;
+  padding: 12px;
+  color: #3b1717;
+}
+
+.workflow-failure-card header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.workflow-failure-card strong {
+  color: #9f1d1d;
+}
+
+.workflow-failure-card span,
+.workflow-failure-card small {
+  color: #9f5b5b;
+}
+
+.workflow-failure-card p {
+  margin: 0;
+}
+
 .attachment-tray {
   display: flex;
   flex-wrap: wrap;
@@ -2314,7 +2582,8 @@ body,
   opacity: 1;
 }
 
-.template-picker > button {
+.template-picker > button,
+.access-mode-picker > button {
   color: #d4d4d8;
   font-size: 13px;
   font-weight: 520;
@@ -2661,7 +2930,8 @@ body {
   color: var(--text-muted);
 }
 
-.template-picker > button {
+.template-picker > button,
+.access-mode-picker > button {
   color: var(--text-secondary);
 }
 
@@ -3131,6 +3401,43 @@ body {
   color: var(--text-secondary);
 }
 
+.capability-gap-group > header span,
+.orion-tool-catalog-group > header span,
+.orion-skill-group > header span,
+.capability-gap-empty,
+.capability-gap-row em,
+.capability-gap-row small,
+.capability-gap-row p,
+.orion-tool-catalog-row em,
+.orion-tool-catalog-row small,
+.orion-tool-catalog-row p,
+.orion-skill-row em,
+.orion-skill-row small,
+.orion-skill-row p {
+  color: var(--text-secondary);
+}
+
+.capability-gap-group > header button,
+.orion-skill-group > header button {
+  border-color: var(--border);
+  background: #ffffff;
+  color: var(--text-primary);
+}
+
+.capability-gap-row,
+.orion-tool-catalog-row,
+.orion-skill-row {
+  border-color: var(--border);
+  border-radius: 14px;
+  background: #ffffff;
+}
+
+.capability-gap-row strong,
+.orion-tool-catalog-row strong,
+.orion-skill-row strong {
+  color: var(--text-primary);
+}
+
 .danger-button,
 .config-action-row .danger-button {
   color: var(--danger);
@@ -3404,8 +3711,14 @@ button,
   font-weight: 760;
 }
 
-.workflow-progress-step.running .workflow-progress-icon,
 .workflow-progress-step.pending .workflow-progress-icon {
+  border-color: #cfd2ff;
+  background: transparent;
+  color: transparent;
+  animation: none;
+}
+
+.workflow-progress-step.running .workflow-progress-icon {
   border-color: #c8c9ff;
   border-top-color: var(--accent);
   color: transparent;
@@ -3609,7 +3922,10 @@ button,
 
 .terminal-log p.system-line .line-text,
 .terminal-log p.error-line .line-text {
-  display: inline-block;
+  position: relative;
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 8px;
   max-width: min(760px, 100%);
   border: 1px solid var(--border);
   border-radius: 16px;
@@ -3617,6 +3933,12 @@ button,
   color: var(--text-primary);
   padding: 10px 12px;
   box-shadow: var(--shadow-sm, 0 1px 2px rgba(0, 0, 0, 0.04));
+}
+
+.terminal-log p.system-line .line-text > span:first-child,
+.terminal-log p.error-line .line-text > span:first-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .terminal-log p.error-line .line-text {
@@ -4405,6 +4727,101 @@ textarea {
   overflow-wrap: anywhere;
 }
 
+/* Copy button final polish: fixed circular affordance, purple copied state. */
+.copy-message-button {
+  box-sizing: border-box;
+  width: 28px !important;
+  height: 28px !important;
+  min-width: 28px !important;
+  min-height: 28px !important;
+  max-width: 28px !important;
+  max-height: 28px !important;
+  padding: 0 !important;
+  aspect-ratio: 1 / 1;
+  border-radius: 999px !important;
+  font-size: 13px;
+}
+
+.copy-message-button.copied,
+.copy-message-button.copied:hover,
+.copy-message-button.copied:focus-visible {
+  border-color: transparent;
+  background: var(--accent);
+  color: #ffffff;
+  box-shadow: 0 8px 20px rgba(91, 92, 246, 0.24);
+}
+
+/* Keep text insertion carets visible in editable controls. */
+.user-message-row {
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 5px;
+}
+
+.user-message-bubble {
+  padding: 12px 15px;
+}
+
+.terminal-log p.system-line .message-copy-actions,
+.terminal-log p.error-line .message-copy-actions,
+.user-message-row .message-copy-actions {
+  display: flex;
+  height: 22px;
+  align-items: center;
+  opacity: 0;
+  transition: opacity 0.16s ease;
+}
+
+.terminal-log p.system-line .message-copy-actions,
+.terminal-log p.error-line .message-copy-actions {
+  justify-content: flex-start;
+  margin: 5px 0 0 12px;
+}
+
+.user-message-row .message-copy-actions {
+  justify-content: flex-end;
+  padding-right: 8px;
+}
+
+.terminal-log p.system-line:hover .message-copy-actions,
+.terminal-log p.system-line:focus-within .message-copy-actions,
+.terminal-log p.error-line:hover .message-copy-actions,
+.terminal-log p.error-line:focus-within .message-copy-actions,
+.user-message-row:hover .message-copy-actions,
+.user-message-row:focus-within .message-copy-actions {
+  opacity: 1;
+}
+
+.copy-message-button {
+  position: static !important;
+  transform: none !important;
+  width: 22px !important;
+  height: 22px !important;
+  min-width: 22px !important;
+  min-height: 22px !important;
+  max-width: 22px !important;
+  max-height: 22px !important;
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-muted);
+  opacity: 1;
+  box-shadow: none;
+}
+
+.copy-message-button:hover:not(.copied),
+.copy-message-button:focus-visible:not(.copied) {
+  border-color: var(--border);
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--text-primary);
+}
+
+input,
+textarea,
+select,
+.composer textarea {
+  caret-color: var(--accent, #5b5cf6) !important;
+}
+
 /* Composer stop button should stay in the light theme and center the stop mark. */
 .composer-toolbar > button.stop-workflow-button,
 .composer-toolbar > button.stop-workflow-button:hover,
@@ -4702,7 +5119,7 @@ textarea {
   display: none !important;
 }
 
-.app-shell.inspector-collapsed .workspace .terminal-log {
+.app-shell.inspector-collapsed.has-activity-float .workspace .terminal-log {
   padding-right: calc(360px + 96px);
 }
 
@@ -4792,24 +5209,28 @@ textarea {
   height: 22px;
   display: grid;
   place-items: center;
+  border: 1px solid #cfd2ff;
   border-radius: 999px;
-  background: var(--surface-muted);
-  color: var(--text-muted);
+  background: transparent;
+  color: transparent;
   font-size: 12px;
   font-weight: 760;
 }
 
 .orion-activity-step.done > span {
+  border-color: transparent;
   background: var(--success-soft);
   color: var(--success);
 }
 
 .orion-activity-step.running > span {
+  border-color: #c8c9ff;
   background: var(--accent-soft);
   color: var(--accent);
 }
 
 .orion-activity-step.failed > span {
+  border-color: transparent;
   background: var(--danger-soft);
   color: var(--danger);
 }
@@ -4836,6 +5257,133 @@ textarea {
 
 .orion-activity-float {
   padding: 14px;
+}
+
+.workflow-progress-float.expanded {
+  animation: activityFloatExpand 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  transform-origin: top right;
+}
+
+.workflow-progress-float.collapsed {
+  width: min(280px, calc(100vw - var(--sidebar-width) - 104px));
+  min-height: 48px;
+  max-height: 48px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "title progress"
+    "meta progress";
+  align-items: center;
+  gap: 1px 12px;
+  padding: 9px 12px;
+  border-radius: 16px;
+  border: 1px solid rgba(216, 216, 230, 0.92);
+  background: rgba(255, 255, 255, 0.94);
+  color: var(--text-primary);
+  cursor: pointer;
+  overflow: hidden;
+  animation: activityFloatCollapseIn 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  transform-origin: top right;
+}
+
+.workflow-progress-float.collapsed span {
+  grid-area: title;
+  min-width: 0;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 760;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow-progress-float.collapsed strong {
+  grid-area: progress;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 760;
+  padding: 5px 9px;
+}
+
+.workflow-progress-float.collapsed em {
+  grid-area: meta;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-style: normal;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow-progress-float.collapsed:hover,
+.workflow-progress-float.collapsed:focus-visible {
+  border-color: rgba(91, 92, 246, 0.32);
+  box-shadow: 0 20px 54px rgba(91, 92, 246, 0.16);
+  transform: translateY(-1px);
+}
+
+.activity-float-toggle {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  flex: 0 0 auto;
+  border: 1px solid rgba(216, 216, 230, 0.9);
+  border-radius: 999px;
+  background: #ffffff;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 160ms ease, border-color 160ms ease, color 160ms ease, transform 160ms ease;
+}
+
+.activity-float-toggle span {
+  width: 8px;
+  height: 8px;
+  display: block;
+  border-right: 1.8px solid currentColor;
+  border-bottom: 1.8px solid currentColor;
+  transform: translateY(-2px) rotate(45deg);
+}
+
+.activity-float-toggle:hover,
+.activity-float-toggle:focus-visible {
+  border-color: rgba(91, 92, 246, 0.34);
+  background: var(--accent-soft);
+  color: var(--accent);
+  transform: translateY(-1px);
+}
+
+@keyframes activityFloatExpand {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes activityFloatCollapseIn {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.94);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workflow-progress-float.expanded,
+  .workflow-progress-float.collapsed {
+    animation: none;
+  }
 }
 
 

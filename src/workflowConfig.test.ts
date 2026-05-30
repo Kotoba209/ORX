@@ -4,16 +4,16 @@ import {
   createDefaultWorkflows,
   deleteWorkflow,
   duplicateWorkflow,
+  migrateWorkflowDefinition,
   setDefaultWorkflow,
   updateWorkflowSteps,
 } from "./workflowConfig.ts";
 
-test("default workflow collection exposes three selectable workflows with one default", () => {
+test("default workflow collection exposes three selectable workflows without a default selection", () => {
   const workflows = createDefaultWorkflows();
 
   assert.deepEqual(workflows.map((workflow) => workflow.id), ["full-development", "bug-fix", "test-only"]);
-  assert.equal(workflows.filter((workflow) => workflow.isDefault).length, 1);
-  assert.equal(workflows.find((workflow) => workflow.isDefault)?.id, "full-development");
+  assert.equal(workflows.filter((workflow) => workflow.isDefault).length, 0);
   assert.ok(workflows.every((workflow) => workflow.steps.length > 0));
 });
 
@@ -46,6 +46,31 @@ test("full workflow starts PD with Trellis multi-turn clarification before PRD a
   assert.equal(clarification?.approval, "none");
 });
 
+test("migrates saved development workflows to include an implementation node before review", () => {
+  const full = createDefaultWorkflows().find((workflow) => workflow.id === "full-development");
+  assert.ok(full);
+  const oldWorkflow = {
+    ...full,
+    steps: full.steps.filter((step) => step.stage !== "Implementation"),
+  };
+  const migrated = migrateWorkflowDefinition(oldWorkflow);
+  const stages = migrated.steps.map((step) => step.stage);
+
+  assert.equal(stages.includes("Implementation"), true);
+  assert.ok(stages.indexOf("TaskSplit") < stages.indexOf("Implementation"));
+  assert.ok(stages.indexOf("Implementation") < stages.indexOf("CodeReview"));
+  assert.equal(migrated.steps.find((step) => step.stage === "CodeReview")?.rollback_target, "Implementation");
+  assert.ok(migrated.steps.find((step) => step.stage === "Implementation")?.completion_criteria?.some((criterion) => /FILE artifact/.test(criterion)));
+});
+
+test("does not duplicate implementation nodes when migrating current workflows", () => {
+  const full = createDefaultWorkflows().find((workflow) => workflow.id === "full-development");
+  assert.ok(full);
+  const migrated = migrateWorkflowDefinition(full);
+
+  assert.equal(migrated.steps.filter((step) => step.stage === "Implementation").length, 1);
+});
+
 test("duplicating a workflow creates an editable independent copy", () => {
   const { workflows, activeWorkflowId } = duplicateWorkflow(createDefaultWorkflows(), "bug-fix");
   const original = workflows.find((workflow) => workflow.id === "bug-fix");
@@ -70,7 +95,7 @@ test("setting a default workflow clears the previous default", () => {
 });
 
 test("delete workflow keeps default workflow and selects a remaining workflow", () => {
-  const initial = createDefaultWorkflows();
+  const initial = setDefaultWorkflow(createDefaultWorkflows(), "full-development");
 
   const defaultDelete = deleteWorkflow(initial, "full-development", "bug-fix");
   assert.equal(defaultDelete.workflows.length, initial.length);

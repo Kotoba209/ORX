@@ -15,6 +15,8 @@ export type OrionActionKind =
   | "skill.attach"
   | "skill.detach"
   | "memory.search"
+  | "web.fetchUrl"
+  | "web.fetchUrlInsecure"
   | "web.searchPublic"
   | "web.searchSensitive"
   | "memory.append"
@@ -52,6 +54,8 @@ const riskByAction: Record<OrionActionKind, OrionRiskLevel> = {
   "skill.list": "direct",
   "skill.attach": "direct",
   "memory.search": "direct",
+  "web.fetchUrl": "direct",
+  "web.fetchUrlInsecure": "strong-confirm",
   "web.searchPublic": "direct",
   "file.readProjectFile": "direct",
   "file.searchProject": "direct",

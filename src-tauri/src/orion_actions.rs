@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::error::Error;
 use std::fs;
 use std::io::{BufRead, BufReader};
@@ -67,6 +68,29 @@ pub struct WebSearchHit {
 pub struct WebSearchResult {
     pub query: String,
     pub results: Vec<WebSearchHit>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct WebFetchInput {
+    pub url: String,
+    pub include_html: bool,
+    pub include_headers: bool,
+    pub max_bytes: Option<usize>,
+    #[serde(default)]
+    pub danger_accept_invalid_certs: bool,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct WebFetchResult {
+    pub url: String,
+    pub final_url: String,
+    pub status: u16,
+    pub content_type: String,
+    pub headers: Vec<(String, String)>,
+    pub bytes: usize,
+    pub html: String,
+    pub text_preview: String,
+    pub insecure_tls: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -200,6 +224,61 @@ pub fn web_search(input: WebSearchInput) -> Result<WebSearchResult, String> {
     Ok(WebSearchResult { query: query.to_string(), results })
 }
 
+pub fn fetch_url(input: WebFetchInput) -> Result<WebFetchResult, String> {
+    let url = input.url.trim();
+    if url.is_empty() {
+        return Err("网页地址不能为空".to_string());
+    }
+    let parsed = reqwest::Url::parse(url).map_err(|error| format!("网页地址无效: {error}"))?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err("只允许读取 http/https 网页".to_string());
+    }
+    let max_bytes = input.max_bytes.unwrap_or(200_000).clamp(1_024, 1_000_000);
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .user_agent("ORX/0.3 local assistant")
+        .redirect(reqwest::redirect::Policy::limited(5))
+        .danger_accept_invalid_certs(input.danger_accept_invalid_certs)
+        .build()
+        .map_err(|error| format!("创建网页读取客户端失败: {error}"))?;
+    let response = client
+        .get(parsed)
+        .send()
+        .map_err(|error| format!("读取网页失败: {}", format_reqwest_error(&error)))?;
+    let status = response.status().as_u16();
+    let final_url = response.url().to_string();
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    let headers = if input.include_headers {
+        response.headers().iter()
+            .map(|(name, value)| (name.as_str().to_string(), value.to_str().unwrap_or("").to_string()))
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+    let bytes = response.bytes().map_err(|error| format!("读取网页正文失败: {error}"))?;
+    let byte_count = bytes.len();
+    let limited = if byte_count > max_bytes { &bytes[..max_bytes] } else { &bytes[..] };
+    let body = String::from_utf8_lossy(limited).to_string();
+    let html = if input.include_html { body.clone() } else { String::new() };
+    let text_preview = extract_page_text_preview(&body, 1200);
+    Ok(WebFetchResult {
+        url: url.to_string(),
+        final_url,
+        status,
+        content_type,
+        headers,
+        bytes: byte_count,
+        html,
+        text_preview,
+        insecure_tls: input.danger_accept_invalid_certs,
+    })
+}
+
 fn fetch_search_html(client: &reqwest::blocking::Client, engine: &str, base_url: &str, query: &str) -> Result<String, String> {
     let mut url = reqwest::Url::parse(base_url).map_err(|error| format!("构造 {engine} 搜索地址失败: {error}"))?;
     url.query_pairs_mut().append_pair("q", query);
@@ -281,7 +360,8 @@ pub fn run_whitelisted_command(input: WhitelistedCommandInput) -> Result<Whiteli
         Some(value) => canonical_dir(value)?,
         None => std::env::current_dir().map_err(|error| format!("读取当前目录失败: {error}"))?,
     };
-    let output = Command::new(&input.program)
+    let command_program = resolve_command_program(&input.program);
+    let output = Command::new(&command_program)
         .args(&input.args)
         .current_dir(&cwd)
         .output()
@@ -299,24 +379,19 @@ pub fn run_whitelisted_command(input: WhitelistedCommandInput) -> Result<Whiteli
 pub fn run_sandboxed_command(input: SandboxCommandInput) -> Result<SandboxCommandResult, String> {
     validate_sandbox_command(&input.program, &input.args)?;
     let root = canonical_dir(&input.project_root)?;
-    ensure_git_project_clean(&root)?;
-    let sandbox_root = std::env::temp_dir().join("orx-worktree-sandbox");
-    fs::create_dir_all(&sandbox_root).map_err(|error| format!("创建沙箱根目录失败: {error}"))?;
-    let sandbox_path = sandbox_root.join(format!("run-{}", current_millis()));
-    run_git_checked(&root, &["worktree", "add", "--detach", sandbox_path.to_string_lossy().as_ref(), "HEAD"])?;
+    let sandbox = prepare_sandbox_workspace(&root)?;
 
     let timeout = Duration::from_secs(input.timeout_secs.unwrap_or(120).clamp(5, 600));
     let started = std::time::Instant::now();
-    let (status, stdout, stderr) = run_process_with_timeout(&input.program, &input.args, &sandbox_path, timeout);
+    let (status, stdout, stderr) = run_process_with_timeout(&input.program, &input.args, &sandbox.path, timeout);
     let elapsed_ms = started.elapsed().as_millis();
-    let changed_files = sandbox_changed_files(&sandbox_path).unwrap_or_default();
-    let diff_stat = sandbox_diff_stat(&sandbox_path).unwrap_or_default();
+    let (changed_files, diff_stat) = sandbox_changes(&sandbox).unwrap_or_default();
 
     Ok(SandboxCommandResult {
         program: input.program,
         args: input.args,
         project_root: root.display().to_string(),
-        sandbox_path: sandbox_path.display().to_string(),
+        sandbox_path: sandbox.path.display().to_string(),
         status,
         stdout,
         stderr,
@@ -338,6 +413,7 @@ pub fn orion_action_risk(kind: &str) -> &'static str {
         | "workflow.run"
         | "skill.list"
         | "skill.attach"
+        | "web.fetchUrl"
         | "web.searchPublic"
         | "memory.search"
         | "file.readProjectFile"
@@ -352,7 +428,7 @@ pub fn orion_action_risk(kind: &str) -> &'static str {
         | "command.reviewSandbox"
         | "command.runWorktreeSandbox"
         | "release.build" => "confirm",
-        "workflow.delete" | "workflow.setDefault" | "git.commit" | "git.tag" | "git.push" => "strong-confirm",
+        "web.fetchUrlInsecure" | "workflow.delete" | "workflow.setDefault" | "git.commit" | "git.tag" | "git.push" => "strong-confirm",
         _ => "strong-confirm",
     }
 }
@@ -400,6 +476,142 @@ fn ensure_git_project_clean(root: &Path) -> Result<(), String> {
     Ok(())
 }
 
+struct SandboxWorkspace {
+    path: PathBuf,
+    mode: SandboxMode,
+    baseline: HashMap<String, FileSnapshot>,
+}
+
+enum SandboxMode {
+    GitWorktree,
+    DirectoryCopy,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct FileSnapshot {
+    len: u64,
+    modified_ms: u128,
+}
+
+fn prepare_sandbox_workspace(root: &Path) -> Result<SandboxWorkspace, String> {
+    match ensure_git_project_clean(root) {
+        Ok(()) => {
+            let sandbox_root = std::env::temp_dir().join("orx-worktree-sandbox");
+            fs::create_dir_all(&sandbox_root).map_err(|error| format!("创建沙箱根目录失败: {error}"))?;
+            let sandbox_path = sandbox_root.join(format!("run-{}", current_millis()));
+            run_git_checked(root, &["worktree", "add", "--detach", sandbox_path.to_string_lossy().as_ref(), "HEAD"])?;
+            Ok(SandboxWorkspace { path: sandbox_path, mode: SandboxMode::GitWorktree, baseline: HashMap::new() })
+        }
+        Err(error) if error.contains("not a git repository") => {
+            let sandbox_root = std::env::temp_dir().join("orx-copy-sandbox");
+            fs::create_dir_all(&sandbox_root).map_err(|create_error| format!("创建沙箱根目录失败: {create_error}"))?;
+            let sandbox_path = sandbox_root.join(format!("run-{}", current_millis()));
+            copy_project_for_sandbox(root, &sandbox_path)?;
+            let baseline = snapshot_sandbox_files(&sandbox_path)?;
+            Ok(SandboxWorkspace { path: sandbox_path, mode: SandboxMode::DirectoryCopy, baseline })
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn copy_project_for_sandbox(source: &Path, destination: &Path) -> Result<(), String> {
+    fs::create_dir_all(destination).map_err(|error| format!("创建目录副本沙箱失败: {error}"))?;
+    copy_project_dir(source, source, destination)
+}
+
+fn copy_project_dir(root: &Path, current: &Path, destination: &Path) -> Result<(), String> {
+    for entry in fs::read_dir(current).map_err(|error| format!("读取目录失败: {error}"))? {
+        let entry = entry.map_err(|error| format!("读取目录项失败: {error}"))?;
+        let path = entry.path();
+        let relative = path.strip_prefix(root).map_err(|error| format!("计算相对路径失败: {error}"))?;
+        if should_skip_sandbox_copy(relative) {
+            continue;
+        }
+        let target = destination.join(relative);
+        let file_type = entry.file_type().map_err(|error| format!("读取文件类型失败: {error}"))?;
+        if file_type.is_dir() {
+            fs::create_dir_all(&target).map_err(|error| format!("创建沙箱目录失败: {error}"))?;
+            copy_project_dir(root, &path, destination)?;
+        } else if file_type.is_file() {
+            if let Some(parent) = target.parent() {
+                fs::create_dir_all(parent).map_err(|error| format!("创建沙箱文件目录失败: {error}"))?;
+            }
+            fs::copy(&path, &target).map_err(|error| format!("复制沙箱文件失败: {error}"))?;
+        }
+    }
+    Ok(())
+}
+
+fn should_skip_sandbox_copy(relative: &Path) -> bool {
+    let skip_dirs = [".git", "node_modules", "target", "dist", "build", ".next", ".vite", "coverage"];
+    relative.components().any(|component| {
+        let name = component.as_os_str().to_string_lossy().to_ascii_lowercase();
+        skip_dirs.contains(&name.as_str())
+    })
+}
+
+fn sandbox_changes(sandbox: &SandboxWorkspace) -> Result<(Vec<String>, String), String> {
+    match sandbox.mode {
+        SandboxMode::GitWorktree => Ok((
+            sandbox_changed_files(&sandbox.path).unwrap_or_default(),
+            sandbox_diff_stat(&sandbox.path).unwrap_or_default(),
+        )),
+        SandboxMode::DirectoryCopy => {
+            let changed_files = copy_sandbox_changed_files(&sandbox.path, &sandbox.baseline)?;
+            let diff_stat = if changed_files.is_empty() {
+                String::new()
+            } else {
+                format!("目录副本沙箱检测到 {} 个改动文件", changed_files.len())
+            };
+            Ok((changed_files, diff_stat))
+        }
+    }
+}
+
+fn copy_sandbox_changed_files(root: &Path, baseline: &HashMap<String, FileSnapshot>) -> Result<Vec<String>, String> {
+    let current = snapshot_sandbox_files(root)?;
+    let mut changed = current
+        .iter()
+        .filter_map(|(path, snapshot)| match baseline.get(path) {
+            Some(previous) if previous == snapshot => None,
+            _ => Some(path.clone()),
+        })
+        .collect::<Vec<_>>();
+    changed.sort();
+    Ok(changed)
+}
+
+fn snapshot_sandbox_files(root: &Path) -> Result<HashMap<String, FileSnapshot>, String> {
+    let mut snapshot = HashMap::new();
+    snapshot_sandbox_dir(root, root, &mut snapshot)?;
+    Ok(snapshot)
+}
+
+fn snapshot_sandbox_dir(root: &Path, current: &Path, snapshot: &mut HashMap<String, FileSnapshot>) -> Result<(), String> {
+    for entry in fs::read_dir(current).map_err(|error| format!("读取沙箱目录失败: {error}"))? {
+        let entry = entry.map_err(|error| format!("读取沙箱目录项失败: {error}"))?;
+        let path = entry.path();
+        let relative = path.strip_prefix(root).map_err(|error| format!("计算沙箱相对路径失败: {error}"))?;
+        if should_skip_sandbox_copy(relative) {
+            continue;
+        }
+        let file_type = entry.file_type().map_err(|error| format!("读取沙箱文件类型失败: {error}"))?;
+        if file_type.is_dir() {
+            snapshot_sandbox_dir(root, &path, snapshot)?;
+        } else if file_type.is_file() {
+            let metadata = entry.metadata().map_err(|error| format!("读取沙箱文件元数据失败: {error}"))?;
+            let modified_ms = metadata
+                .modified()
+                .ok()
+                .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|duration| duration.as_millis())
+                .unwrap_or_default();
+            snapshot.insert(relative.to_string_lossy().replace('\\', "/"), FileSnapshot { len: metadata.len(), modified_ms });
+        }
+    }
+    Ok(())
+}
+
 fn run_git_checked(root: &Path, args: &[&str]) -> Result<String, String> {
     let output = run_git_output(root, args)?;
     Ok(output)
@@ -419,7 +631,8 @@ fn run_git_output(root: &Path, args: &[&str]) -> Result<String, String> {
 
 fn run_process_with_timeout(program: &str, args: &[String], cwd: &Path, timeout: Duration) -> (i32, String, String) {
     let started = std::time::Instant::now();
-    let child_result = Command::new(program)
+    let command_program = resolve_command_program(program);
+    let child_result = Command::new(command_program)
         .args(args)
         .current_dir(cwd)
         .stdout(std::process::Stdio::piped())
@@ -458,6 +671,44 @@ fn run_process_with_timeout(program: &str, args: &[String], cwd: &Path, timeout:
             Err(error) => return (-1, String::new(), format!("等待沙箱命令失败: {error}")),
         }
     }
+}
+
+fn resolve_command_program(program: &str) -> PathBuf {
+    let trimmed = program.trim();
+    let candidate = PathBuf::from(trimmed);
+    if candidate.components().count() > 1 || candidate.extension().is_some() {
+        return candidate;
+    }
+
+    #[cfg(windows)]
+    {
+        let path_exts = std::env::var("PATHEXT")
+            .unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_string())
+            .split(';')
+            .filter_map(|ext| {
+                let normalized = ext.trim();
+                if normalized.is_empty() {
+                    None
+                } else if normalized.starts_with('.') {
+                    Some(normalized.to_ascii_lowercase())
+                } else {
+                    Some(format!(".{}", normalized.to_ascii_lowercase()))
+                }
+            })
+            .collect::<Vec<_>>();
+        if let Some(path) = std::env::var_os("PATH") {
+            for dir in std::env::split_paths(&path) {
+                for ext in &path_exts {
+                    let executable = dir.join(format!("{trimmed}{ext}"));
+                    if executable.is_file() {
+                        return executable;
+                    }
+                }
+            }
+        }
+    }
+
+    candidate
 }
 
 fn sandbox_changed_files(sandbox_path: &Path) -> Result<Vec<String>, String> {
@@ -896,6 +1147,15 @@ mod tests {
         assert_eq!(result.status, 0);
         assert!(result.stdout.trim().starts_with('v'));
 
+        let npm_result = run_whitelisted_command(WhitelistedCommandInput {
+            program: "npm".to_string(),
+            args: vec!["--version".to_string()],
+            cwd: None,
+        })
+        .unwrap();
+        assert_eq!(npm_result.status, 0);
+        assert!(!npm_result.stdout.trim().is_empty());
+
         assert!(run_whitelisted_command(WhitelistedCommandInput {
             program: "git".to_string(),
             args: vec!["push".to_string()],
@@ -930,6 +1190,32 @@ mod tests {
         assert!(!root.join("sandbox.txt").exists());
 
         let _ = Command::new("git").args(["worktree", "remove", "--force", &result.sandbox_path]).current_dir(&root).output();
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn runs_sandboxed_command_in_temporary_copy_for_non_git_directory() {
+        let root = std::env::temp_dir().join(format!("orx_sandbox_plain_{}", current_millis_for_test()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("README.md"), "base").unwrap();
+        fs::write(root.join("src").join("app.txt"), "app").unwrap();
+
+        let result = run_sandboxed_command(SandboxCommandInput {
+            project_root: root.display().to_string(),
+            program: "node".to_string(),
+            args: vec!["-e".to_string(), "require('fs').writeFileSync('sandbox.txt','ok')".to_string()],
+            timeout_secs: Some(15),
+        })
+        .unwrap();
+
+        assert_eq!(result.status, 0);
+        assert!(result.sandbox_path.contains("orx-copy-sandbox"));
+        assert!(result.changed_files.iter().any(|file| file.ends_with("sandbox.txt")));
+        assert!(!root.join("sandbox.txt").exists());
+        assert!(PathBuf::from(&result.sandbox_path).join("README.md").exists());
+
+        let _ = fs::remove_dir_all(result.sandbox_path);
         let _ = fs::remove_dir_all(root);
     }
 
@@ -971,6 +1257,8 @@ mod tests {
         assert_eq!(orion_action_risk("file.readProjectFile"), "direct");
         assert_eq!(orion_action_risk("file.searchProject"), "direct");
         assert_eq!(orion_action_risk("local.inspectConfig"), "direct");
+        assert_eq!(orion_action_risk("web.fetchUrl"), "direct");
+        assert_eq!(orion_action_risk("web.fetchUrlInsecure"), "strong-confirm");
         assert_eq!(orion_action_risk("web.searchPublic"), "direct");
         assert_eq!(orion_action_risk("file.writeGeneratedArtifactAuto"), "direct");
         assert_eq!(orion_action_risk("web.searchSensitive"), "confirm");

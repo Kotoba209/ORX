@@ -50,6 +50,15 @@ test("routes local computer tasks to assistant mode instead of workflow mode", (
   assert.equal(researchDecision.mode, "assistant");
 });
 
+test("routes existing website analysis to assistant mode before software workflow keywords", () => {
+  const decision = classifyOrionIntent("是我个人的，主要做安全测试内容以及靶场练习，我需要页面HTML包括服务器技术栈，地址是 https://hnr.pages.dev/", {
+    projectFiles: ["package.json", "src/App.tsx"],
+  });
+
+  assert.equal(decision.mode, "assistant");
+  assert.equal(decision.reason, "task_mentions_website_analysis");
+});
+
 test("keeps software work in workflow mode when task or project context is code related", () => {
   const bugDecision = classifyOrionIntent("fix the login failure bug", {
     projectFiles: ["notes.txt"],
@@ -91,6 +100,22 @@ test("assistant response routes non-whitelisted commands to worktree sandbox exe
     args: ["lint"],
     cwd: "",
     request: "运行 pnpm lint",
+    sandbox_required: true,
+    sandbox_kind: "git-worktree",
+  });
+});
+
+test("assistant response treats explicit node file writes as command execution", () => {
+  const command = `运行 node -e "require('fs').writeFileSync('sandbox-test.txt','ok')"`;
+  const response = createOrionAssistantResponse(command);
+
+  assert.equal(response.mode, "assistant");
+  assert.deepEqual(response.actions.map((action) => action.kind), ["command.runWorktreeSandbox"]);
+  assert.deepEqual(response.actions[0].payload, {
+    program: "node",
+    args: ["-e", "require('fs').writeFileSync('sandbox-test.txt','ok')"],
+    cwd: "",
+    request: command,
     sandbox_required: true,
     sandbox_kind: "git-worktree",
   });

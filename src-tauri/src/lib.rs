@@ -26,6 +26,8 @@ use orion_actions::{
     SandboxCommandResult,
     WebSearchInput,
     WebSearchResult,
+    WebFetchInput,
+    WebFetchResult,
     WhitelistedCommandInput,
     WhitelistedCommandResult,
 };
@@ -208,6 +210,13 @@ async fn orion_web_search(input: WebSearchInput) -> Result<WebSearchResult, Stri
 }
 
 #[tauri::command]
+async fn orion_fetch_url(input: WebFetchInput) -> Result<WebFetchResult, String> {
+    tauri::async_runtime::spawn_blocking(move || orion_actions::fetch_url(input))
+        .await
+        .map_err(|error| format!("网页读取后台任务失败: {error}"))?
+}
+
+#[tauri::command]
 fn orion_write_generated_artifact(input: GeneratedArtifactWriteInput) -> Result<GeneratedArtifactWriteResult, String> {
     orion_actions::write_generated_artifact(input)
 }
@@ -265,6 +274,7 @@ pub fn run() {
             orion_read_project_file,
             orion_search_project,
             orion_web_search,
+            orion_fetch_url,
             orion_write_generated_artifact,
             orion_validate_whitelisted_command,
             orion_run_whitelisted_command,

@@ -70,6 +70,18 @@ export function markOrionActivityActionFailed(run: OrionActivityRun, actionId: s
   return finishAction(run, actionId, "failed", detail, "failed");
 }
 
+export function completeOrionActivityWithoutActions(run: OrionActivityRun, detail: string): OrionActivityRun {
+  return {
+    ...run,
+    status: "done",
+    steps: run.steps.map((step) => {
+      if (step.id === "summarize") return { ...step, status: "done", detail };
+      if (step.id === "complete") return { ...step, status: "done", detail: "已返回普通对话" };
+      return step;
+    }),
+  };
+}
+
 export function shouldShowOrionActivityFloat(input: OrionActivityFloatVisibilityInput) {
   return Boolean(input.run)
     && input.inspectorCollapsed

@@ -9,6 +9,7 @@ export type WorkflowStep = {
   interaction?: "single-turn" | "multi-turn";
   exit_condition?: "node_complete" | "requirements_ready";
   orion_notes?: string[];
+  completion_criteria?: string[];
 };
 
 export type WorkflowTotals = {
@@ -50,9 +51,10 @@ export const defaultSteps: WorkflowStep[] = [
   },
   { stage: "ScenarioRehearsal", owner: "PD Agent", instruction: "输出可预览的需求产品文档，包含场景预演、主路径、异常路径和验收标准。", enabled: true, approval: "user", rollback_target: "ScenarioRehearsal" },
   { stage: "BoundaryProbe", owner: "PD Agent", instruction: "做边界探测，识别环境依赖、输入输出、失败条件和打回条件。", enabled: true, approval: "none" },
-  { stage: "TaskSplit", owner: "DEV Agent", instruction: "拆分接口、数据流、实现任务和测试任务。", enabled: true, approval: "auto", rollback_target: "TaskSplit" },
-  { stage: "CodeReview", owner: "ARCH Agent", instruction: "对 DEV 产物做代码审查、红蓝质询、架构风险和非功能边界评估，输出可预览 CR 报告。", enabled: true, approval: "user", rollback_target: "TaskSplit" },
-  { stage: "TestPlan", owner: "QA Agent", instruction: "优先设计集成测试和端到端测试，记录执行证据。", enabled: true, approval: "none", rollback_target: "TaskSplit" },
+  { stage: "TaskSplit", owner: "DEV Agent", instruction: "拆分接口、数据流、实现任务和测试任务。", enabled: true, approval: "auto", rollback_target: "TaskSplit", completion_criteria: ["Implementation tasks are explicit.", "Target files or modules are named when known.", "Verification path is described."] },
+  { stage: "Implementation", owner: "DEV Agent", instruction: "根据上游需求和任务拆分实现代码。代码类任务必须输出带 FILE 标记的完整非空代码块，ORCH 会同步写入当前项目路径。", enabled: true, approval: "auto", rollback_target: "Implementation", completion_criteria: ["Code tasks must output at least one non-empty FILE artifact.", "Generated file paths must be relative project paths.", "The response must summarize changed files and how to verify them."] },
+  { stage: "CodeReview", owner: "ARCH Agent", instruction: "对 DEV 项目路径中的真实代码产物做代码审查、红蓝质询、架构风险和非功能边界评估，输出可预览 CR 报告。", enabled: true, approval: "user", rollback_target: "Implementation", completion_criteria: ["Review is based on real files in the project path.", "Findings identify blocking vs non-blocking risks.", "If no real code artifact exists, the node must report blocked."] },
+  { stage: "TestPlan", owner: "QA Agent", instruction: "优先检查当前项目路径中的 DEV 真实代码产物，设计集成测试和端到端测试，记录执行证据。", enabled: true, approval: "none", rollback_target: "Implementation", completion_criteria: ["Test plan references the implemented files or explicitly says none exist.", "Executed checks and unexecuted checks are separated.", "Residual risks and next verification step are recorded."] },
   { stage: "Retrospective", owner: "PM Agent", instruction: "输出交付总结，优先汇总 DEV 做了什么改动、生成了哪些新产物、修改了哪些原有文件；同时输出 QA 做了哪些测试、覆盖了哪些场景、是否全量覆盖、未覆盖项和残留风险；最后给出是否可交付、阻塞项和下一步。流程治理问题只作为补充。", enabled: true, approval: "none" },
 ];
 
@@ -97,8 +99,13 @@ export function getRollbackIndex(gate: ApprovalGateState, steps = defaultSteps) 
   return index >= 0 ? index : gate.stepIndex;
 }
 
-export function nextRuntimeAfterApproval<T extends WorkflowRuntimeState>(gate: ApprovalGateState & { runtime: T }) {
-  return gate.runtime;
+export function nextRuntimeAfterApproval<T extends WorkflowRuntimeState>(gate: ApprovalGateState & { runtime: T }, note = ""): T {
+  const approvalNote = note.trim();
+  if (!approvalNote) return gate.runtime;
+  return {
+    ...gate.runtime,
+    upstream: trimWorkflowContext(`${gate.runtime.upstream}\n\n[ORCH / approval]\n用户批准 ${gate.step.owner} / ${gate.step.stage} 产物。\n审批意见：${approvalNote}`),
+  };
 }
 
 export function nextRuntimeAfterRejection<T extends WorkflowRuntimeState>(gate: ApprovalGateState & { runtime: T }, note: string, steps = defaultSteps): T {
@@ -122,6 +129,16 @@ export function taskLikelyNeedsFileArtifact(task: string) {
 
 export function stepShouldProduceFileArtifact(step: WorkflowStep) {
   return step.owner.includes("DEV") && !/(TaskSplit|Plan|Design|Analysis|Probe|Clarification)/i.test(step.stage);
+}
+
+export function formatWorkflowStepCompletionCriteria(step: WorkflowStep) {
+  if (!step.completion_criteria?.length) return "";
+  return [
+    "",
+    "[ORCH / completion criteria]",
+    ...step.completion_criteria.map((criterion, index) => `${index + 1}. ${criterion}`),
+    "If these criteria cannot be met, explicitly report the node as blocked instead of pretending it is complete.",
+  ].join("\n");
 }
 
 export function outputHasFileArtifact(output: string) {

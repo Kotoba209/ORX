@@ -12,6 +12,10 @@ function cloneSteps(steps: WorkflowStep[]) {
   return steps.map((step) => ({ ...step }));
 }
 
+function defaultCompletionCriteria(stage: string) {
+  return defaultSteps.find((step) => step.stage === stage)?.completion_criteria;
+}
+
 function uniqueWorkflowId(workflows: WorkflowDefinition[], baseId: string) {
   const existing = new Set(workflows.map((workflow) => workflow.id));
   if (!existing.has(baseId)) return baseId;
@@ -20,16 +24,43 @@ function uniqueWorkflowId(workflows: WorkflowDefinition[], baseId: string) {
   return `${baseId}-${index}`;
 }
 
-function normalizeDefaults(workflows: WorkflowDefinition[], defaultId?: string) {
-  const fallbackId = workflows[0]?.id ?? "";
-  const targetId = workflows.some((workflow) => workflow.id === defaultId) ? defaultId : fallbackId;
+function normalizeDefaults(workflows: WorkflowDefinition[], defaultId?: string | null) {
+  if (!defaultId) return workflows.map((workflow) => ({ ...workflow, isDefault: false }));
+  const targetId = workflows.some((workflow) => workflow.id === defaultId) ? defaultId : "";
   return workflows.map((workflow) => ({ ...workflow, isDefault: workflow.id === targetId }));
+}
+
+export function migrateWorkflowDefinition(workflow: WorkflowDefinition): WorkflowDefinition {
+  const steps = cloneSteps(workflow.steps);
+  const hasTaskSplit = steps.some((step) => step.stage === "TaskSplit" && step.owner === "DEV Agent");
+  const hasImplementation = steps.some((step) => step.stage === "Implementation" && step.owner === "DEV Agent");
+  if (hasTaskSplit && !hasImplementation) {
+    const taskSplitIndex = steps.findIndex((step) => step.stage === "TaskSplit" && step.owner === "DEV Agent");
+    steps.splice(taskSplitIndex + 1, 0, {
+      stage: "Implementation",
+      owner: "DEV Agent",
+      instruction: "根据上游需求和任务拆分实现代码。代码类任务必须输出带 FILE 标记的完整非空代码块，ORCH 会同步写入当前项目路径。",
+      enabled: true,
+      approval: "auto",
+      rollback_target: "Implementation",
+      completion_criteria: defaultCompletionCriteria("Implementation"),
+    });
+  }
+  return {
+    ...workflow,
+    steps: steps.map((step) => {
+      if ((step.stage === "CodeReview" || step.stage === "TestPlan") && steps.some((item) => item.stage === "Implementation")) {
+        return { ...step, rollback_target: "Implementation", completion_criteria: step.completion_criteria ?? defaultCompletionCriteria(step.stage) };
+      }
+      return { ...step, completion_criteria: step.completion_criteria ?? defaultCompletionCriteria(step.stage) };
+    }),
+  };
 }
 
 export function createDefaultWorkflows(): WorkflowDefinition[] {
   const fullSteps = cloneSteps(defaultSteps);
   const bugFixSteps = cloneSteps(defaultSteps)
-    .filter((step) => ["Intake", "BoundaryProbe", "TaskSplit", "CodeReview", "TestPlan", "Retrospective"].includes(step.stage))
+    .filter((step) => ["Intake", "BoundaryProbe", "TaskSplit", "Implementation", "CodeReview", "TestPlan", "Retrospective"].includes(step.stage))
     .map((step) => step.stage === "TaskSplit" ? { ...step, approval: "auto" as const, rollback_target: "TaskSplit" } : step);
   const testOnlySteps = cloneSteps(defaultSteps)
     .filter((step) => ["Intake", "TestPlan", "Retrospective"].includes(step.stage))
@@ -54,11 +85,11 @@ export function createDefaultWorkflows(): WorkflowDefinition[] {
       description: "用于已有实现的测试计划、执行记录和复盘。",
       steps: testOnlySteps,
     },
-  ], "full-development");
+  ], null);
 }
 
 export function getDefaultWorkflow(workflows: WorkflowDefinition[]) {
-  return workflows.find((workflow) => workflow.isDefault) ?? workflows[0];
+  return workflows.find((workflow) => workflow.isDefault);
 }
 
 export function updateWorkflow(workflows: WorkflowDefinition[], workflowId: string, patch: Partial<Omit<WorkflowDefinition, "id" | "steps">>) {
@@ -83,7 +114,8 @@ export function addWorkflow(workflows: WorkflowDefinition[]) {
 }
 
 export function duplicateWorkflow(workflows: WorkflowDefinition[], workflowId: string) {
-  const source = workflows.find((workflow) => workflow.id === workflowId) ?? getDefaultWorkflow(workflows);
+  const source = workflows.find((workflow) => workflow.id === workflowId) ?? getDefaultWorkflow(workflows) ?? workflows[0];
+  if (!source) return addWorkflow(workflows);
   const id = uniqueWorkflowId(workflows, `${source.id}-copy`);
   const workflow: WorkflowDefinition = {
     ...source,

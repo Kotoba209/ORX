@@ -31,6 +31,7 @@ test("maps ORION local mutation and build actions to confirm risk", () => {
 });
 
 test("maps ORION destructive and git actions to strong confirmation risk", () => {
+  assert.equal(getOrionActionRisk("web.fetchUrlInsecure"), "strong-confirm");
   assert.equal(getOrionActionRisk("workflow.delete"), "strong-confirm");
   assert.equal(getOrionActionRisk("workflow.setDefault"), "strong-confirm");
   assert.equal(getOrionActionRisk("git.commit"), "strong-confirm");
@@ -42,6 +43,7 @@ test("confirmation helper treats direct actions as immediately executable", () =
   assert.equal(actionNeedsConfirmation("file.readProjectFile"), false);
   assert.equal(actionNeedsConfirmation("web.searchPublic"), false);
   assert.equal(actionNeedsConfirmation("web.searchSensitive"), true);
+  assert.equal(actionNeedsConfirmation("web.fetchUrlInsecure"), true);
   assert.equal(actionNeedsConfirmation("release.build"), true);
   assert.equal(actionNeedsConfirmation("git.push"), true);
 });

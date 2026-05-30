@@ -175,6 +175,7 @@ pub fn create_task_archive(base_dir: impl AsRef<Path>, input: TaskArchiveStartIn
 
 pub fn save_task_artifact(base_dir: impl AsRef<Path>, export_root: Option<String>, input: TaskArtifactInput) -> Result<TaskArchiveRef, String> {
     let task_dir = resolve_task_dir(base_dir, &input.task_id)?;
+    let mut archive = read_workflow(&task_dir)?;
     let artifact_name = format!("{}-{}.md", sanitize_segment(&input.stage), sanitize_segment(&input.owner));
     let artifact_path = task_dir.join("artifacts").join(&artifact_name);
     let content = format!(
@@ -195,8 +196,8 @@ pub fn save_task_artifact(base_dir: impl AsRef<Path>, export_root: Option<String
         Vec::new()
     };
     export_artifacts(&task_dir, export_root.as_deref(), &input.task_id, &input.owner, &artifact_name, &artifact_path, &generated_files)?;
+    sync_generated_files_to_project(&task_dir, &archive.project_path, &generated_files)?;
 
-    let mut archive = read_workflow(&task_dir)?;
     archive.artifacts.push(ArtifactRecord {
         owner: input.owner,
         stage: input.stage,
@@ -211,6 +212,31 @@ pub fn save_task_artifact(base_dir: impl AsRef<Path>, export_root: Option<String
     write_workflow(&task_dir, &archive)?;
 
     Ok(TaskArchiveRef { id: archive.id, path: task_dir.display().to_string() })
+}
+
+fn sync_generated_files_to_project(task_dir: &Path, project_path: &str, generated_files: &[String]) -> Result<(), String> {
+    let project_root = project_path.trim();
+    if project_root.is_empty() || generated_files.is_empty() {
+        return Ok(());
+    }
+    let project_root = PathBuf::from(project_root);
+    fs::create_dir_all(&project_root).map_err(|error| format!("创建项目代码产物目录失败: {error}"))?;
+    let project_root = project_root.canonicalize().map_err(|error| format!("校验项目代码产物目录失败: {error}"))?;
+    for generated_file in generated_files {
+      let relative = generated_file.strip_prefix("generated/").unwrap_or(generated_file);
+      let safe_relative = safe_relative_filename(relative)?;
+      let source = task_dir.join(generated_file);
+      let target = project_root.join(&safe_relative);
+      if let Some(parent) = target.parent() {
+          fs::create_dir_all(parent).map_err(|error| format!("创建项目代码产物子目录失败: {error}"))?;
+      }
+      let target_parent = target.parent().unwrap_or(&project_root).canonicalize().map_err(|error| format!("校验项目代码产物子目录失败: {error}"))?;
+      if !target_parent.starts_with(&project_root) {
+          return Err(format!("拒绝同步到项目目录外: {safe_relative}"));
+      }
+      fs::copy(&source, &target).map_err(|error| format!("同步 generated 文件到项目失败: {error}"))?;
+    }
+    Ok(())
 }
 
 pub fn save_task_attachments(base_dir: impl AsRef<Path>, input: TaskAttachmentInput) -> Result<TaskAttachmentSaveResult, String> {
@@ -753,6 +779,43 @@ mod tests {
 
         let _ = fs::remove_dir_all(base);
         let _ = fs::remove_dir_all(export_root);
+    }
+
+    #[test]
+    fn task_archive_syncs_dev_generated_files_to_project_root() {
+        let base = std::env::temp_dir().join(format!("workflow_client_project_sync_source_test_{}", new_task_id()));
+        let project_root = std::env::temp_dir().join(format!("workflow_client_project_sync_root_test_{}", new_task_id()));
+        let archive = create_task_archive(
+            &base,
+            TaskArchiveStartInput {
+                task: "生成前端页面".to_string(),
+                project_path: project_root.display().to_string(),
+                workflow_template: "完整需求开发流程".to_string(),
+            },
+        )
+        .unwrap();
+
+        save_task_artifact(
+            &base,
+            None,
+            TaskArtifactInput {
+                task_id: archive.id.clone(),
+                owner: "DEV Agent".to_string(),
+                stage: "Implementation".to_string(),
+                status: "done".to_string(),
+                elapsed_ms: 1,
+                input_tokens: 1,
+                output_tokens: 1,
+                total_tokens: 2,
+                output: "```html\n<!-- FILE: src/index.html -->\n<main>OK</main>\n```".to_string(),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(fs::read_to_string(project_root.join("src").join("index.html")).unwrap(), "<main>OK</main>");
+
+        let _ = fs::remove_dir_all(base);
+        let _ = fs::remove_dir_all(project_root);
     }
 
     #[test]

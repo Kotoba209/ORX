@@ -1,6 +1,7 @@
 export type ComposerSendStateInput = {
   workflowRunning: boolean;
   assistantRunning: boolean;
+  chatRunning?: boolean;
   approvalGate: boolean;
   clarificationGate: boolean;
 };
@@ -29,6 +30,15 @@ export function composerSendState(input: ComposerSendStateInput): ComposerSendSt
       className: "assistant-loading-button",
       ariaLabel: "ORION 正在执行本机助手动作",
       title: "ORION 正在执行",
+      content: "",
+    };
+  }
+  if (input.chatRunning) {
+    return {
+      disabled: true,
+      className: "assistant-loading-button chat-loading-button",
+      ariaLabel: "ORION 正在等待模型回复",
+      title: "ORION 正在回复",
       content: "",
     };
   }

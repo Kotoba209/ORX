@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   defaultSteps,
+  formatWorkflowStepCompletionCriteria,
   getApprovalPrompt,
   getRollbackTarget,
   isApproveCommand,
@@ -74,6 +75,16 @@ test("approval commands continue from the paused next step", () => {
   assert.equal(next.upstream, gate.runtime.upstream);
 });
 
+test("approval notes are carried into the next model upstream", () => {
+  const gate = approvedGate("ScenarioRehearsal");
+  const next = nextRuntimeAfterApproval(gate, "字段命名按 client.ts 对齐");
+
+  assert.equal(next.nextIndex, gate.runtime.nextIndex);
+  assert.match(next.upstream, /ORCH \/ approval/);
+  assert.match(next.upstream, /用户批准 PD Agent \/ ScenarioRehearsal 产物/);
+  assert.match(next.upstream, /字段命名按 client\.ts 对齐/);
+});
+
 test("PD rejection rolls back to PD document step without carrying rejected output", () => {
   const gate = approvedGate("ScenarioRehearsal");
   const next = nextRuntimeAfterRejection(gate, "需求不够明确");
@@ -91,17 +102,17 @@ test("ARCH rejection rolls back to DEV implementation step", () => {
   const gate = approvedGate("CodeReview");
   const next = nextRuntimeAfterRejection(gate, "实现和需求不一致");
 
-  assert.equal(getRollbackTarget(gate).stage, "TaskSplit");
+  assert.equal(getRollbackTarget(gate).stage, "Implementation");
   assert.equal(getRollbackTarget(gate).owner, "DEV Agent");
-  assert.equal(next.nextIndex, defaultSteps.findIndex((step) => step.stage === "TaskSplit"));
-  assert.match(next.upstream, /回滚目标：DEV Agent \/ TaskSplit/);
+  assert.equal(next.nextIndex, defaultSteps.findIndex((step) => step.stage === "Implementation"));
+  assert.match(next.upstream, /回滚目标：DEV Agent \/ Implementation/);
 });
 
 test("unknown approval input asks user to make an explicit approval decision", () => {
   assert.equal(isApproveCommand("看起来还行"), false);
   assert.equal(isRejectCommand("看起来还行"), false);
   assert.match(getApprovalPrompt(approvedGate("CodeReview")), /回复“同意\/批准\/通过”继续/);
-  assert.match(getApprovalPrompt(approvedGate("CodeReview")), /回复“否决\/打回\/不通过”回滚到 TaskSplit/);
+  assert.match(getApprovalPrompt(approvedGate("CodeReview")), /回复“否决\/打回\/不通过”回滚到 Implementation/);
 });
 
 test("approval input can carry optional review notes", () => {
@@ -125,6 +136,16 @@ test("code tasks require DEV implementation artifacts before QA can be meaningfu
   assert.equal(stepShouldProduceFileArtifact(devStep), true);
   assert.equal(outputHasFileArtifact("这里只是方案，没有实际文件"), false);
   assert.equal(outputHasFileArtifact("```html\n<!-- FILE: index.html -->\n<form></form>\n```"), true);
+});
+
+test("workflow steps expose completion criteria for model handoff", () => {
+  const implementation = defaultSteps.find((step) => step.stage === "Implementation");
+  const review = defaultSteps.find((step) => step.stage === "CodeReview");
+  assert.ok(implementation);
+  assert.ok(review);
+
+  assert.match(formatWorkflowStepCompletionCriteria(implementation), /FILE artifact/);
+  assert.match(formatWorkflowStepCompletionCriteria(review), /real files/);
 });
 
 test("task split does not require a file artifact before implementation", () => {
@@ -173,7 +194,7 @@ test("headless full workflow supports approve and reject branches before QA comp
   visited.push(checkpoint.gate.step.stage);
 
   runtime = nextRuntimeAfterRejection(checkpoint.gate, "实现没有输出 HTML 文件");
-  assert.equal(runtime.nextIndex, defaultSteps.findIndex((step) => step.stage === "TaskSplit"));
+  assert.equal(runtime.nextIndex, defaultSteps.findIndex((step) => step.stage === "Implementation"));
   checkpoint = runUntilApproval(runtime);
   assert.equal(checkpoint.gate?.step.stage, "CodeReview");
   visited.push(`${checkpoint.gate.step.stage}:rerun`);

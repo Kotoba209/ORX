@@ -69,3 +69,41 @@ test("routes local non-development tasks to ORION assistant", () => {
 
   assert.equal(route.kind, "assistant");
 });
+
+test("routes website technology stack analysis to ORION assistant instead of development workflow", () => {
+  const workflows = createDefaultWorkflows();
+
+  const route = resolveOrionConversationRoute("我需要页面 HTML 包括服务器技术栈，地址是 https://hnr.pages.dev/", {
+    workflows,
+    activeWorkflowId: "full-development",
+    projectFiles: ["package.json", "src/App.tsx"],
+  });
+
+  assert.equal(route.kind, "assistant");
+});
+
+test("routes ambiguous codebase tasks to ORION assistant when no workflow is selected", () => {
+  const workflows = createDefaultWorkflows();
+
+  const route = resolveOrionConversationRoute("帮我看一下这个项目", {
+    workflows,
+    activeWorkflowId: "",
+    projectFiles: ["package.json", "src/App.tsx"],
+  });
+
+  assert.equal(route.kind, "assistant");
+  assert.equal(route.reason, "no_active_workflow_selected");
+});
+
+test("routes security practice website html and server stack requests to assistant", () => {
+  const workflows = createDefaultWorkflows();
+
+  const route = resolveOrionConversationRoute("是我个人的，主要做安全测试内容以及靶场练习，我需要页面HTML包括服务器技术栈，地址是 https://hnr.pages.dev/", {
+    workflows,
+    activeWorkflowId: "full-development",
+    projectFiles: ["package.json", "src/App.tsx"],
+  });
+
+  assert.equal(route.kind, "assistant");
+  assert.equal(route.reason, "task_mentions_website_analysis");
+});

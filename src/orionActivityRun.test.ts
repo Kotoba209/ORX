@@ -7,6 +7,7 @@ import {
   shouldShowOrionActivityFloat,
   markOrionActivityActionDone,
   markOrionActivityActionRunning,
+  completeOrionActivityWithoutActions,
 } from "./orionActivityRun.ts";
 
 test("creates a temporary activity run for ORION assistant actions", () => {
@@ -51,6 +52,15 @@ test("updates an ORION activity action through running and done states", () => {
   assert.equal(done.steps[3].detail, "命中 3 处");
   assert.equal(done.steps[4].status, "done");
   assert.equal(done.steps[5].status, "done");
+});
+
+test("completes a temporary activity run when no assistant actions are generated", () => {
+  const run = createOrionActivityRun("读取到的是什么内容", []);
+  const done = completeOrionActivityWithoutActions(run, "按普通对话返回，不需要执行本机动作");
+
+  assert.equal(done.status, "done");
+  assert.deepEqual(done.steps.map((step) => step.status), ["done", "done", "done", "done", "done"]);
+  assert.equal(done.steps.at(-2)?.detail, "按普通对话返回，不需要执行本机动作");
 });
 
 test("shows ORION activity as a float when the inspector is collapsed and no workflow is active", () => {
