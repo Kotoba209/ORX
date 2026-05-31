@@ -88,7 +88,7 @@ export function removeConversationSessions(conversations: ConversationSession[],
 }
 
 export function selectConversationOrionMemory(conversation: ConversationSession | undefined, legacyEntries: OrionMemoryEntry[]) {
-  if (conversation?.orionMemoryEntries.length) return conversation.orionMemoryEntries;
+  if (conversation) return conversation.orionMemoryEntries;
   return legacyEntries;
 }
 

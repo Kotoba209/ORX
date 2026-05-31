@@ -72,6 +72,12 @@ pub struct AgentRunInput {
     pub upstream: String,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct DirectProviderRunInput {
+    pub provider: ProviderConfigInput,
+    pub message: String,
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct AgentRunResult {
     pub owner: String,
@@ -123,13 +129,110 @@ fn default_api_protocol() -> String {
     API_PROTOCOL_RESPONSES.to_string()
 }
 
+fn provider(
+    id: &str,
+    name: &str,
+    kind: &str,
+    api_protocol: &str,
+    base_url: &str,
+    use_proxy_route: bool,
+    model: &str,
+    api_key_ref: &str,
+) -> ProviderConfig {
+    ProviderConfig {
+        id: id.to_string(),
+        name: name.to_string(),
+        kind: kind.to_string(),
+        api_protocol: normalized_api_protocol(api_protocol).to_string(),
+        base_url: base_url.trim_end_matches('/').to_string(),
+        use_proxy_route,
+        proxy_url: default_proxy_url(),
+        model: model.to_string(),
+        api_key_ref: api_key_ref.to_string(),
+    }
+}
+
+fn binding(role: &str, provider: &ProviderConfig) -> AgentBinding {
+    AgentBinding {
+        role: role.to_string(),
+        provider_id: provider.id.clone(),
+        model: provider.model.clone(),
+        temperature: if role == "product" { 0.3 } else { 0.2 },
+    }
+}
+
+fn normalize_role(role: &str) -> String {
+    match role.trim() {
+        "qa" => "tester".to_string(),
+        value => value.to_string(),
+    }
+}
+
+fn normalize_snapshot(snapshot: ProviderConfigSnapshot) -> ProviderConfigSnapshot {
+    let mut providers = Vec::new();
+    for provider in snapshot.providers {
+        if provider.id.trim().is_empty() || providers.iter().any(|item: &ProviderConfig| item.id == provider.id) {
+            continue;
+        }
+        providers.push(ProviderConfig {
+            id: provider.id.trim().to_string(),
+            name: provider.name.trim().to_string(),
+            kind: provider.kind.trim().to_string(),
+            api_protocol: normalized_api_protocol(&provider.api_protocol).to_string(),
+            base_url: provider.base_url.trim().trim_end_matches('/').to_string(),
+            use_proxy_route: provider.use_proxy_route,
+            proxy_url: provider.proxy_url.trim().trim_end_matches('/').to_string(),
+            model: provider.model.trim().to_string(),
+            api_key_ref: provider.api_key_ref.trim().to_string(),
+        });
+    }
+    if providers.is_empty() {
+        return default_config();
+    }
+
+    let provider_ids = providers.iter().map(|provider| provider.id.clone()).collect::<std::collections::HashSet<_>>();
+    let valid_roles = ["administrator", "product", "developer", "architect", "tester"];
+    let mut agents = Vec::new();
+    for agent in snapshot.agents {
+        let role = normalize_role(&agent.role);
+        if !valid_roles.contains(&role.as_str()) || !provider_ids.contains(&agent.provider_id) {
+            continue;
+        }
+        if agents.iter().any(|item: &AgentBinding| item.role == role) {
+            continue;
+        }
+        agents.push(AgentBinding {
+            role,
+            provider_id: agent.provider_id,
+            model: agent.model,
+            temperature: agent.temperature,
+        });
+    }
+
+    let default_snapshot = default_config();
+    for role in valid_roles {
+        if !agents.iter().any(|agent| agent.role == role) {
+            if let Some(default_agent) = default_snapshot.agents.iter().find(|agent| agent.role == role) {
+                if provider_ids.contains(&default_agent.provider_id) {
+                    agents.push(default_agent.clone());
+                    continue;
+                }
+            }
+            agents.push(binding(role, &providers[0]));
+        }
+    }
+
+    ProviderConfigSnapshot { providers, agents }
+}
+
 pub fn load_config(path: impl AsRef<Path>) -> Result<ProviderConfigSnapshot, String> {
     let path = path.as_ref();
     if !path.exists() {
         return Ok(default_config());
     }
     let content = fs::read_to_string(path).map_err(|error| format!("读取 Provider 配置失败: {error}"))?;
-    serde_json::from_str(&content).map_err(|error| format!("解析 Provider 配置失败: {error}"))
+    let snapshot = serde_json::from_str(&content).map_err(|error| format!("解析 Provider 配置失败: {error}"))?;
+    Ok(normalize_snapshot(snapshot))
 }
 
 pub fn save_provider(path: impl AsRef<Path>, input: ProviderConfigInput) -> Result<ProviderConfigSnapshot, String> {
@@ -152,6 +255,11 @@ pub fn save_provider(path: impl AsRef<Path>, input: ProviderConfigInput) -> Resu
         *existing = provider;
     } else {
         snapshot.providers.push(provider);
+    }
+    if let Some(saved_provider) = snapshot.providers.iter().find(|item| item.id == input.id.trim()) {
+        for agent in snapshot.agents.iter_mut().filter(|agent| agent.provider_id == saved_provider.id) {
+            agent.model = saved_provider.model.clone();
+        }
     }
     snapshot.providers.sort_by(|left, right| left.name.cmp(&right.name));
     write_config(path, &snapshot)?;
@@ -205,7 +313,7 @@ pub fn test_provider_connection(input: ProviderConfigInput) -> Result<ProviderCo
         return Err(format!("API Key 引用为空: {}", input.api_key_ref.trim()));
     }
 
-    let endpoint = provider_endpoint(input.base_url.trim(), &input.api_protocol);
+    let endpoint = provider_endpoint_for_model(input.base_url.trim(), &input.api_protocol, input.model.trim());
     let mut client_builder = reqwest::blocking::Client::builder().timeout(Duration::from_secs(PROVIDER_TEST_TIMEOUT_SECS));
     if input.use_proxy_route {
         let proxy = reqwest::Proxy::all(input.proxy_url.trim()).map_err(|error| format!("代理地址无效: {error}"))?;
@@ -224,7 +332,7 @@ pub fn test_provider_connection(input: ProviderConfigInput) -> Result<ProviderCo
             ok: true,
             status,
             endpoint,
-            message: extract_response_text(&text).unwrap_or_else(|| "连接成功，但未解析到文本输出。".to_string()),
+            message: extract_response_output(&text).unwrap_or_else(|| "连接成功，但未解析到文本输出。".to_string()),
         })
     } else {
         Ok(ProviderConnectionResult { ok: false, status, endpoint, message: trim_message(&text) })
@@ -252,7 +360,7 @@ pub fn run_agent(input: AgentRunInput) -> Result<AgentRunResult, String> {
         return Err(format!("API Key 引用为空: {}", input.provider.api_key_ref.trim()));
     }
 
-    let endpoint = provider_endpoint(input.provider.base_url.trim(), &input.provider.api_protocol);
+    let endpoint = provider_endpoint_for_model(input.provider.base_url.trim(), &input.provider.api_protocol, input.provider.model.trim());
     let prompt = build_agent_prompt(&input.owner, &input.stage, &input.task, &input.upstream);
     let mut client_builder = reqwest::blocking::Client::builder().timeout(Duration::from_secs(AGENT_RUN_TIMEOUT_SECS));
     if input.provider.use_proxy_route {
@@ -271,11 +379,90 @@ pub fn run_agent(input: AgentRunInput) -> Result<AgentRunResult, String> {
         return Err(format!("{} HTTP {status} {}", agent_call_diagnostic(&input, &endpoint, "non-success status"), trim_message(&text)));
     }
     let usage = extract_token_usage(&text);
+    let output = extract_response_output(&text).unwrap_or_else(|| {
+        if is_image_generation_model(input.provider.model.trim()) {
+            format!(
+                "图片模型已返回，但 ORX 暂未解析到图片字段。\nendpoint={endpoint}\nresponse_preview={}",
+                trim_message(&text)
+            )
+        } else {
+            "Agent 已完成，但未解析到文本输出。".to_string()
+        }
+    });
     Ok(AgentRunResult {
         owner: input.owner,
         stage: input.stage,
         endpoint,
-        output: trim_agent_output(&extract_response_text(&text).unwrap_or_else(|| "Agent 已完成，但未解析到文本输出。".to_string())),
+        output: trim_agent_output(&output),
+        elapsed_ms: started_at.elapsed().as_millis() as u64,
+        input_tokens: usage.input_tokens,
+        output_tokens: usage.output_tokens,
+        total_tokens: usage.total_tokens,
+    })
+}
+
+pub fn run_provider_direct(input: DirectProviderRunInput) -> Result<AgentRunResult, String> {
+    let started_at = Instant::now();
+    validate_provider(&input.provider)?;
+    let message = input.message.trim();
+    if message.is_empty() {
+        return Err("直连模型消息不能为空".to_string());
+    }
+    if input.provider.kind.trim() == "mock" {
+        return Ok(AgentRunResult {
+            owner: "MODEL".to_string(),
+            stage: "直连模型".to_string(),
+            endpoint: "mock://direct-provider".to_string(),
+            output: format!("Mock direct response: {message}"),
+            elapsed_ms: started_at.elapsed().as_millis() as u64,
+            input_tokens: message.chars().count() as u64,
+            output_tokens: 32,
+            total_tokens: message.chars().count() as u64 + 32,
+        });
+    }
+
+    let api_key = resolve_api_key(input.provider.api_key_ref.trim())?;
+    if api_key.trim().is_empty() {
+        return Err(format!("API Key 引用为空: {}", input.provider.api_key_ref.trim()));
+    }
+
+    let endpoint = provider_endpoint_for_model(input.provider.base_url.trim(), &input.provider.api_protocol, input.provider.model.trim());
+    let mut client_builder = reqwest::blocking::Client::builder().timeout(Duration::from_secs(AGENT_RUN_TIMEOUT_SECS));
+    if input.provider.use_proxy_route {
+        let proxy = reqwest::Proxy::all(input.provider.proxy_url.trim()).map_err(|error| format!("代理地址无效: {error}"))?;
+        client_builder = client_builder.proxy(proxy);
+    }
+    let client = client_builder.build().map_err(|error| format!("创建 HTTP 客户端失败: {error}"))?;
+    let payload = build_direct_provider_payload(&input.provider.api_protocol, input.provider.model.trim(), message)?;
+    let request = client.post(&endpoint).json(&payload);
+    let response = apply_provider_auth(request, &input.provider.api_protocol, api_key.trim())
+        .send()
+        .map_err(|error| direct_call_diagnostic(&input.provider, &endpoint, &format_reqwest_error(&error)))?;
+    let status = response.status().as_u16();
+    let text = response.text().unwrap_or_default();
+    if !(200..300).contains(&status) {
+        return Err(format!("{} HTTP {status} {}", direct_call_diagnostic(&input.provider, &endpoint, "non-success status"), trim_message(&text)));
+    }
+    let usage = extract_token_usage(&text);
+    let output = extract_response_output(&text).unwrap_or_else(|| {
+        let raw = text.trim();
+        if !raw.is_empty() && serde_json::from_str::<serde_json::Value>(raw).is_err() {
+            return raw.to_string();
+        }
+        if is_image_generation_model(input.provider.model.trim()) {
+            format!(
+                "图片模型已返回，但 ORX 暂未解析到图片字段。\nendpoint={endpoint}\nresponse_preview={}",
+                trim_message(&text)
+            )
+        } else {
+            "模型已完成，但未解析到输出。".to_string()
+        }
+    });
+    Ok(AgentRunResult {
+        owner: "MODEL".to_string(),
+        stage: "直连模型".to_string(),
+        endpoint,
+        output: trim_agent_output(&output),
         elapsed_ms: started_at.elapsed().as_millis() as u64,
         input_tokens: usage.input_tokens,
         output_tokens: usage.output_tokens,
@@ -328,7 +515,40 @@ fn build_provider_payload(protocol: &str, model: &str, prompt: &str, upstream: &
     build_provider_payload_with_limit(protocol, model, prompt, upstream, 4096)
 }
 
+fn build_direct_provider_payload(protocol: &str, model: &str, message: &str) -> Result<serde_json::Value, String> {
+    let message = message.trim();
+    if normalized_api_protocol(protocol) == API_PROTOCOL_CUSTOM_DIRECT && is_image_generation_model(model) {
+        return Ok(serde_json::json!({
+            "model": model,
+            "prompt": message,
+            "n": 1
+        }));
+    }
+
+    match normalized_api_protocol(protocol) {
+        API_PROTOCOL_ANTHROPIC_MESSAGES => Ok(serde_json::json!({
+            "model": model,
+            "messages": [{ "role": "user", "content": message }],
+            "max_tokens": 4096
+        })),
+        API_PROTOCOL_CUSTOM_DIRECT => Ok(serde_json::json!({
+            "model": model,
+            "messages": [{ "role": "user", "content": message }],
+            "max_tokens": 4096
+        })),
+        _ => build_responses_payload(model, message, ""),
+    }
+}
+
 fn build_provider_payload_with_limit(protocol: &str, model: &str, prompt: &str, upstream: &str, max_tokens: u64) -> Result<serde_json::Value, String> {
+    if normalized_api_protocol(protocol) == API_PROTOCOL_CUSTOM_DIRECT && is_image_generation_model(model) {
+        return Ok(serde_json::json!({
+            "model": model,
+            "prompt": image_generation_prompt(prompt, upstream),
+            "n": 1
+        }));
+    }
+
     match normalized_api_protocol(protocol) {
         API_PROTOCOL_ANTHROPIC_MESSAGES => Ok(serde_json::json!({
             "model": model,
@@ -347,6 +567,21 @@ fn build_provider_payload_with_limit(protocol: &str, model: &str, prompt: &str, 
             }
             Ok(payload)
         }
+    }
+}
+
+fn image_generation_prompt(prompt: &str, upstream: &str) -> String {
+    let task = prompt
+        .lines()
+        .skip_while(|line| !line.contains("ORCH 调度器下发任务如下"))
+        .nth(1)
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .unwrap_or_else(|| prompt.trim());
+    if upstream.trim().is_empty() {
+        task.to_string()
+    } else {
+        format!("{task}\n\n参考上下文：\n{}", upstream.trim())
     }
 }
 
@@ -383,29 +618,89 @@ fn image_mime_for_path(path: &Path) -> &'static str {
 }
 
 fn default_config() -> ProviderConfigSnapshot {
-    let provider = ProviderConfig {
-        id: "gpt-local".to_string(),
-        name: "GPT Local".to_string(),
-        kind: "openai-compatible".to_string(),
-        api_protocol: default_api_protocol(),
-        base_url: "http://127.0.0.1:8317/v1".to_string(),
-        use_proxy_route: true,
-        proxy_url: "http://127.0.0.1:7897".to_string(),
-        model: "gpt-5.5".to_string(),
-        api_key_ref: "GPT_LOCAL_API_KEY".to_string(),
-    };
+    let astrdark = provider(
+        "astrdark-grok-imagine-image",
+        "AstrDark Grok Imagine Image",
+        "openai-compatible",
+        API_PROTOCOL_CUSTOM_DIRECT,
+        "https://api.astrdark.cyou",
+        false,
+        "grok-imagine-image",
+        "ASTRDARK_API_KEY",
+    );
+    let sharedchat = provider(
+        "sharedchat-codex",
+        "SharedChat Code",
+        "openai-compatible",
+        API_PROTOCOL_CUSTOM_DIRECT,
+        "https://new.sharedchat.cc/code",
+        false,
+        "gpt-5.4",
+        "SHAREDCHAT_CODEX_API_KEY",
+    );
+    let gpt_local = provider(
+        "gpt-local",
+        "GPT Local",
+        "openai-compatible",
+        API_PROTOCOL_RESPONSES,
+        "http://127.0.0.1:8317/v1",
+        true,
+        "gpt-5.5",
+        "GPT_LOCAL_API_KEY",
+    );
+    let gpt = provider(
+        "provider-1780118391953",
+        "GPT",
+        "openai-compatible",
+        API_PROTOCOL_RESPONSES,
+        "https://api.openai.com/v1",
+        true,
+        "gpt-5.5",
+        "GPT_LOCAL_API_KEY",
+    );
+    let mimo_cn = provider(
+        "mimo-token-plan-cn",
+        "Mimo Token Plan CN",
+        "anthropic",
+        API_PROTOCOL_ANTHROPIC_MESSAGES,
+        "https://token-plan-sgp.xiaomimimo.com/anthropic",
+        false,
+        "mimo-v2.5-pro",
+        "ANTHROPIC_AUTH_TOKEN",
+    );
+    let bailian = provider(
+        "provider-1780118263362",
+        "百炼",
+        "openai-compatible",
+        API_PROTOCOL_ANTHROPIC_MESSAGES,
+        "https://coding.dashscope.aliyuncs.com/v1",
+        false,
+        "qwen3.6-plus",
+        "ALY_LOCAL_API_KEY",
+    );
+    let mimo = provider(
+        "mimo-token-plan",
+        "Mimo Token Plan",
+        "anthropic-compatible",
+        API_PROTOCOL_ANTHROPIC_MESSAGES,
+        "https://token-plan-sgp.xiaomimimo.com/anthropic",
+        false,
+        "mimo-v2.5-pro",
+        "MIMO_TOKEN_PLAN_API_KEY",
+    );
     let roles = ["administrator", "product", "developer", "architect", "tester"];
     let agents = roles
         .iter()
-        .map(|role| AgentBinding {
-            role: (*role).to_string(),
-            provider_id: provider.id.clone(),
-            model: provider.model.clone(),
-            temperature: if *role == "product" { 0.3 } else { 0.2 },
+        .map(|role| {
+            if *role == "administrator" {
+                binding(role, &astrdark)
+            } else {
+                binding(role, &sharedchat)
+            }
         })
         .collect();
 
-    ProviderConfigSnapshot { providers: vec![provider], agents }
+    ProviderConfigSnapshot { providers: vec![astrdark, sharedchat, gpt_local, gpt, mimo_cn, bailian, mimo], agents }
 }
 
 fn validate_provider(input: &ProviderConfigInput) -> Result<(), String> {
@@ -443,6 +738,25 @@ fn provider_endpoint(base_url: &str, protocol: &str) -> String {
         API_PROTOCOL_CUSTOM_DIRECT => base_url.trim_end_matches('/').to_string(),
         _ => provider_responses_endpoint(base_url),
     }
+}
+
+fn provider_endpoint_for_model(base_url: &str, protocol: &str, model: &str) -> String {
+    let base = base_url.trim_end_matches('/');
+    if normalized_api_protocol(protocol) == API_PROTOCOL_CUSTOM_DIRECT && is_image_generation_model(model) {
+        if base.ends_with("/images/generations") {
+            return base.to_string();
+        }
+        if base.ends_with("/v1") {
+            return format!("{base}/images/generations");
+        }
+        return format!("{base}/v1/images/generations");
+    }
+    provider_endpoint(base_url, protocol)
+}
+
+fn is_image_generation_model(model: &str) -> bool {
+    let normalized = model.to_ascii_lowercase();
+    normalized.contains("image") || normalized.contains("imagine")
 }
 
 fn normalized_api_protocol(protocol: &str) -> &str {
@@ -549,6 +863,94 @@ fn extract_response_text(content: &str) -> Option<String> {
         .map(|text| text.trim().to_string())
 }
 
+fn extract_response_output(content: &str) -> Option<String> {
+    extract_response_text(content).or_else(|| format_image_response_output(content))
+}
+
+fn format_image_response_output(content: &str) -> Option<String> {
+    let images = extract_response_images(content);
+    if images.is_empty() {
+        return None;
+    }
+
+    let mut lines = vec!["已生成图片。".to_string()];
+    for (index, image) in images.iter().enumerate() {
+        lines.push(format!("![生成图片 {}]({image})", index + 1));
+    }
+    Some(lines.join("\n"))
+}
+
+fn extract_response_images(content: &str) -> Vec<String> {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(content) else {
+        return Vec::new();
+    };
+    let mut images = Vec::new();
+    collect_response_images(&value, "", &mut images);
+    images
+}
+
+fn collect_response_images(value: &serde_json::Value, key_hint: &str, images: &mut Vec<String>) {
+    match value {
+        serde_json::Value::Array(items) => {
+            for item in items {
+                collect_response_images(item, key_hint, images);
+            }
+        }
+        serde_json::Value::Object(object) => {
+            for (key, child) in object {
+                collect_response_images(child, key, images);
+            }
+        }
+        serde_json::Value::String(text) => {
+            if let Some(image) = normalize_image_reference(key_hint, text) {
+                if !images.iter().any(|item| item == &image) {
+                    images.push(image);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn normalize_image_reference(key_hint: &str, value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if trimmed.starts_with("data:image/") {
+        return Some(trimmed.to_string());
+    }
+    if looks_like_image_url(trimmed) {
+        return Some(trimmed.to_string());
+    }
+
+    let key = key_hint.to_ascii_lowercase();
+    let image_key = key.contains("b64") || key.contains("base64") || key.contains("image");
+    if image_key && looks_like_base64_image(trimmed) {
+        return Some(format!("data:image/png;base64,{trimmed}"));
+    }
+    None
+}
+
+fn looks_like_image_url(value: &str) -> bool {
+    let lower = value.to_ascii_lowercase();
+    (lower.starts_with("https://") || lower.starts_with("http://"))
+        && (lower.contains(".png")
+            || lower.contains(".jpg")
+            || lower.contains(".jpeg")
+            || lower.contains(".webp")
+            || lower.contains(".gif")
+            || lower.contains("/image")
+            || lower.contains("image="))
+}
+
+fn looks_like_base64_image(value: &str) -> bool {
+    if value.len() < 64 {
+        return false;
+    }
+    value.chars().all(|character| character.is_ascii_alphanumeric() || matches!(character, '+' | '/' | '='))
+}
+
 fn extract_token_usage(content: &str) -> TokenUsage {
     let value = match serde_json::from_str::<serde_json::Value>(content) {
         Ok(value) => value,
@@ -581,6 +983,9 @@ fn trim_message(message: &str) -> String {
 fn trim_agent_output(output: &str) -> String {
     const MAX_CHARS: usize = 24_000;
     let trimmed = output.trim();
+    if trimmed.contains("data:image/") {
+        return trimmed.to_string();
+    }
     if trimmed.chars().count() <= MAX_CHARS {
         return trimmed.to_string();
     }
@@ -597,6 +1002,18 @@ fn agent_call_diagnostic(input: &AgentRunInput, endpoint: &str, error: &str) -> 
         input.provider.model.trim(),
         endpoint,
         if input.provider.use_proxy_route { input.provider.proxy_url.trim() } else { "disabled" },
+        AGENT_RUN_TIMEOUT_SECS,
+        error
+    )
+}
+
+fn direct_call_diagnostic(provider: &ProviderConfigInput, endpoint: &str, error: &str) -> String {
+    format!(
+        "直连模型调用失败: provider={} model={} endpoint={} proxy={} timeout={}s error={}",
+        provider.name.trim(),
+        provider.model.trim(),
+        endpoint,
+        if provider.use_proxy_route { provider.proxy_url.trim() } else { "disabled" },
         AGENT_RUN_TIMEOUT_SECS,
         error
     )
@@ -688,15 +1105,80 @@ mod tests {
     }
 
     #[test]
+    fn save_provider_updates_bound_agent_models() {
+        let path = std::env::temp_dir().join("workflow_client_provider_model_sync.json");
+        let _ = fs::remove_file(&path);
+
+        let _ = save_provider(
+            &path,
+            ProviderConfigInput {
+                id: "sharedchat".to_string(),
+                name: "SharedChat".to_string(),
+                kind: "openai-compatible".to_string(),
+                api_protocol: API_PROTOCOL_CUSTOM_DIRECT.to_string(),
+                base_url: "https://new.sharedchat.cc/code".to_string(),
+                use_proxy_route: false,
+                proxy_url: "http://127.0.0.1:7897".to_string(),
+                model: "gpt-5.4".to_string(),
+                api_key_ref: "SHAREDCHAT_CODEX_API_KEY".to_string(),
+            },
+        )
+        .unwrap();
+        let _ = bind_agent(
+            &path,
+            AgentBindingInput {
+                role: "developer".to_string(),
+                provider_id: "sharedchat".to_string(),
+                model: "gpt-5.4".to_string(),
+                temperature: 0.2,
+            },
+        )
+        .unwrap();
+
+        let snapshot = save_provider(
+            &path,
+            ProviderConfigInput {
+                id: "sharedchat".to_string(),
+                name: "SharedChat".to_string(),
+                kind: "openai-compatible".to_string(),
+                api_protocol: API_PROTOCOL_CUSTOM_DIRECT.to_string(),
+                base_url: "https://new.sharedchat.cc/code".to_string(),
+                use_proxy_route: false,
+                proxy_url: "http://127.0.0.1:7897".to_string(),
+                model: "gpt-5.5".to_string(),
+                api_key_ref: "SHAREDCHAT_CODEX_API_KEY".to_string(),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            snapshot.agents.iter().find(|agent| agent.role == "developer").unwrap().model,
+            "gpt-5.5"
+        );
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
     fn default_config_binds_all_workflow_roles() {
         let snapshot = load_config(std::env::temp_dir().join("missing_provider_config.json")).unwrap();
         let roles = snapshot.agents.iter().map(|agent| agent.role.as_str()).collect::<Vec<_>>();
 
         assert_eq!(roles, vec!["administrator", "product", "developer", "architect", "tester"]);
+        assert_eq!(snapshot.providers.len(), 7);
+        assert_eq!(snapshot.providers[0].id, "astrdark-grok-imagine-image");
         assert_eq!(snapshot.providers[0].kind, "openai-compatible");
-        assert_eq!(snapshot.providers[0].api_protocol, "responses");
-        assert!(snapshot.providers[0].use_proxy_route);
+        assert_eq!(snapshot.providers[0].api_protocol, API_PROTOCOL_CUSTOM_DIRECT);
+        assert_eq!(snapshot.providers[0].base_url, "https://api.astrdark.cyou");
+        assert!(!snapshot.providers[0].use_proxy_route);
         assert_eq!(snapshot.providers[0].proxy_url, "http://127.0.0.1:7897");
+        assert_eq!(
+            snapshot.agents.iter().find(|agent| agent.role == "administrator").unwrap().provider_id,
+            "astrdark-grok-imagine-image"
+        );
+        assert_eq!(
+            snapshot.agents.iter().find(|agent| agent.role == "developer").unwrap().provider_id,
+            "sharedchat-codex"
+        );
     }
 
     #[test]
@@ -785,6 +1267,41 @@ mod tests {
     }
 
     #[test]
+    fn provider_endpoint_routes_custom_image_models_to_image_generation_path() {
+        assert_eq!(
+            provider_endpoint_for_model("https://api.astrdark.cyou", "custom-direct", "grok-imagine-image"),
+            "https://api.astrdark.cyou/v1/images/generations"
+        );
+        assert_eq!(
+            provider_endpoint_for_model("https://api.astrdark.cyou/v1", "custom-direct", "grok-imagine-image"),
+            "https://api.astrdark.cyou/v1/images/generations"
+        );
+        assert_eq!(
+            provider_endpoint_for_model("https://third-party.example.com/api/chat", "custom-direct", "gpt-5.4"),
+            "https://third-party.example.com/api/chat"
+        );
+    }
+
+    #[test]
+    fn custom_direct_image_payload_uses_image_generation_schema() {
+        let payload = build_provider_payload(
+            "custom-direct",
+            "grok-imagine-image",
+            "你是 PM Agent。\nORCH 调度器下发任务如下：\n生成一张科技风 ORX 助手图像\n\n当前流程节点：普通聊天",
+            "",
+        )
+        .unwrap();
+
+        assert_eq!(payload.get("model").and_then(|value| value.as_str()), Some("grok-imagine-image"));
+        assert_eq!(payload.get("n").and_then(|value| value.as_u64()), Some(1));
+        assert!(payload.get("messages").is_none());
+        assert_eq!(
+            payload.get("prompt").and_then(|value| value.as_str()),
+            Some("生成一张科技风 ORX 助手图像")
+        );
+    }
+
+    #[test]
     fn extract_response_text_reads_responses_output_text() {
         let content = r#"{"output":[{"type":"message","content":[{"type":"output_text","text":"OK"}]}]}"#;
         assert_eq!(extract_response_text(content).unwrap(), "OK");
@@ -811,6 +1328,34 @@ mod tests {
         assert!(extracted.ends_with("END"));
         assert_eq!(extracted.chars().count(), 803);
         assert!(!extracted.ends_with("..."));
+    }
+
+    #[test]
+    fn extract_response_output_reads_image_urls() {
+        let content = serde_json::json!({
+            "data": [
+                { "url": "https://cdn.example.com/generated/image-1.png" },
+                { "image_url": "https://cdn.example.com/generated/image-2.webp" }
+            ]
+        }).to_string();
+
+        let extracted = extract_response_output(&content).unwrap();
+
+        assert!(extracted.contains("已生成图片"));
+        assert!(extracted.contains("![生成图片 1](https://cdn.example.com/generated/image-1.png)"));
+        assert!(extracted.contains("![生成图片 2](https://cdn.example.com/generated/image-2.webp)"));
+    }
+
+    #[test]
+    fn extract_response_output_wraps_base64_images_as_data_urls() {
+        let base64_image = "a".repeat(96);
+        let content = serde_json::json!({
+            "data": [{ "b64_json": base64_image }]
+        }).to_string();
+
+        let extracted = extract_response_output(&content).unwrap();
+
+        assert!(extracted.contains("![生成图片 1](data:image/png;base64,"));
     }
 
     #[test]
@@ -850,6 +1395,15 @@ mod tests {
         assert!(trimmed.chars().count() < content.chars().count());
         assert!(trimmed.contains("输出已截断"));
         assert!(trimmed.chars().count() <= 24_200);
+    }
+
+    #[test]
+    fn trim_agent_output_keeps_complete_data_url_images() {
+        let image = format!("已生成图片。\n![生成图片 1](data:image/png;base64,{})", "a".repeat(30_000));
+        let trimmed = trim_agent_output(&image);
+
+        assert_eq!(trimmed, image);
+        assert!(!trimmed.contains("输出已截断"));
     }
 
     #[test]
@@ -1013,6 +1567,35 @@ mod tests {
                 .and_then(|item| item.get("content"))
                 .and_then(|value| value.as_str()),
             Some("请只回复 OK")
+        );
+    }
+
+    #[test]
+    fn direct_custom_text_payload_uses_raw_user_message() {
+        let payload = build_direct_provider_payload("custom-direct", "third-party-model", "你好，不要添加任何系统提示").unwrap();
+
+        assert_eq!(payload.get("model").and_then(|value| value.as_str()), Some("third-party-model"));
+        assert_eq!(payload.get("max_tokens").and_then(|value| value.as_u64()), Some(4096));
+        assert_eq!(
+            payload
+                .get("messages")
+                .and_then(|value| value.as_array())
+                .and_then(|items| items.first())
+                .and_then(|item| item.get("content"))
+                .and_then(|value| value.as_str()),
+            Some("你好，不要添加任何系统提示")
+        );
+    }
+
+    #[test]
+    fn direct_image_payload_uses_raw_user_prompt() {
+        let payload = build_direct_provider_payload("custom-direct", "grok-imagine-image", "生成一张科技风 ORX 助手图像").unwrap();
+
+        assert_eq!(payload.get("model").and_then(|value| value.as_str()), Some("grok-imagine-image"));
+        assert_eq!(payload.get("n").and_then(|value| value.as_u64()), Some(1));
+        assert_eq!(
+            payload.get("prompt").and_then(|value| value.as_str()),
+            Some("生成一张科技风 ORX 助手图像")
         );
     }
 

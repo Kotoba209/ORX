@@ -17,48 +17,33 @@ test("default workflow collection exposes three selectable workflows without a d
   assert.ok(workflows.every((workflow) => workflow.steps.length > 0));
 });
 
-test("full workflow keeps user approval gates while bug-fix skips product PRD approval", () => {
+test("default workflows are temporarily narrowed to FORGE implementation and code review", () => {
   const workflows = createDefaultWorkflows();
-  const full = workflows.find((workflow) => workflow.id === "full-development");
-  const bugFix = workflows.find((workflow) => workflow.id === "bug-fix");
 
-  assert.ok(full);
-  assert.ok(bugFix);
-  assert.equal(full.steps.find((step) => step.stage === "ScenarioRehearsal")?.approval, "user");
-  assert.equal(full.steps.find((step) => step.stage === "CodeReview")?.approval, "user");
-  assert.equal(bugFix.steps.some((step) => step.stage === "ScenarioRehearsal"), false);
-  assert.equal(bugFix.steps.find((step) => step.stage === "CodeReview")?.approval, "user");
+  for (const workflow of workflows) {
+    assert.deepEqual(workflow.steps.map((step) => step.stage), ["Implementation", "CodeReview"]);
+    assert.deepEqual(workflow.steps[0].skill_ids, ["trellis", "grill-me"]);
+    assert.match(workflow.steps[0].instruction, /代号 FORGE/);
+    assert.match(workflow.steps[0].instruction, /Grill-me 核心/);
+    assert.equal(workflow.steps[1].approval, "user");
+    assert.equal(workflow.steps[1].rollback_target, "Implementation");
+    assert.match(workflow.steps[1].instruction, /GitHub Copilot Code Review/);
+    assert.match(workflow.steps[1].instruction, /P0 阻塞/);
+    assert.ok(workflow.steps[1].completion_criteria?.some((criterion) => /Security/.test(criterion)));
+  }
 });
 
-test("full workflow starts PD with Trellis multi-turn clarification before PRD approval", () => {
-  const workflows = createDefaultWorkflows();
-  const full = workflows.find((workflow) => workflow.id === "full-development");
-  assert.ok(full);
-
-  const stages = full.steps.map((step) => step.stage);
-  assert.deepEqual(stages.slice(0, 3), ["Intake", "Clarification", "ScenarioRehearsal"]);
-
-  const clarification = full.steps.find((step) => step.stage === "Clarification");
-  assert.equal(clarification?.owner, "PD Agent");
-  assert.deepEqual(clarification?.skill_ids, ["trellis"]);
-  assert.equal(clarification?.interaction, "multi-turn");
-  assert.equal(clarification?.exit_condition, "requirements_ready");
-  assert.equal(clarification?.approval, "none");
-});
-
-test("migrates saved development workflows to include an implementation node before review", () => {
+test("migrates saved workflows into the temporary two-node development flow", () => {
   const full = createDefaultWorkflows().find((workflow) => workflow.id === "full-development");
   assert.ok(full);
   const oldWorkflow = {
     ...full,
-    steps: full.steps.filter((step) => step.stage !== "Implementation"),
+    steps: full.steps.filter((step) => step.stage !== "CodeReview"),
   };
   const migrated = migrateWorkflowDefinition(oldWorkflow);
   const stages = migrated.steps.map((step) => step.stage);
 
-  assert.equal(stages.includes("Implementation"), true);
-  assert.ok(stages.indexOf("TaskSplit") < stages.indexOf("Implementation"));
-  assert.ok(stages.indexOf("Implementation") < stages.indexOf("CodeReview"));
+  assert.deepEqual(stages, ["Implementation", "CodeReview"]);
   assert.equal(migrated.steps.find((step) => step.stage === "CodeReview")?.rollback_target, "Implementation");
   assert.ok(migrated.steps.find((step) => step.stage === "Implementation")?.completion_criteria?.some((criterion) => /FILE artifact/.test(criterion)));
 });

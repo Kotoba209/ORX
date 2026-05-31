@@ -27,3 +27,6 @@ dist-ssr
 run-logs/
 src-tauri/target-msvc/
 
+# Secrets
+secrets.json
+

@@ -10,7 +10,7 @@ mod orion_actions;
 
 use project_registry::RegisteredProject;
 use project_scanner::ProjectSummary;
-use provider_config::{AgentBindingInput, AgentRunInput, AgentRunResult, ProviderConfigInput, ProviderConfigSnapshot, ProviderConnectionResult};
+use provider_config::{AgentBindingInput, AgentRunInput, AgentRunResult, DirectProviderRunInput, ProviderConfigInput, ProviderConfigSnapshot, ProviderConnectionResult};
 use serde::Serialize;
 use app_settings::AppSettings;
 use memory_rule_store::{MemoryRuleInput, MemoryRuleSnapshot};
@@ -111,6 +111,13 @@ async fn run_agent(input: AgentRunInput) -> Result<AgentRunResult, String> {
     tauri::async_runtime::spawn_blocking(move || provider_config::run_agent(input))
         .await
         .map_err(|error| format!("Agent 后台任务失败: {error}"))?
+}
+
+#[tauri::command]
+async fn run_provider_direct(input: DirectProviderRunInput) -> Result<AgentRunResult, String> {
+    tauri::async_runtime::spawn_blocking(move || provider_config::run_provider_direct(input))
+        .await
+        .map_err(|error| format!("直连模型后台任务失败: {error}"))?
 }
 
 #[tauri::command]
@@ -259,6 +266,7 @@ pub fn run() {
             bind_agent_provider,
             test_provider_connection,
             run_agent,
+            run_provider_direct,
             start_task_archive,
             save_task_artifact,
             save_task_attachments,

@@ -70,7 +70,7 @@ test("persists ORION process memory independently for each conversation", () => 
   assert.deepEqual(restored.conversations.find((conversation) => conversation.id === second.id)?.orionMemoryEntries, []);
 });
 
-test("migrates legacy global ORION memory only when the active conversation has no scoped memory", () => {
+test("keeps conversation memory isolated from legacy global ORION memory", () => {
   const session = createConversationSession("project-1", "legacy", { id: "chat-1", now: 1000 });
   const legacyMemory: OrionMemoryEntry = {
     id: "legacy-memory",
@@ -86,8 +86,9 @@ test("migrates legacy global ORION memory only when the active conversation has 
   };
   const scopedMemory: OrionMemoryEntry = { ...legacyMemory, id: "scoped-memory", traceId: "scoped-trace" };
 
-  assert.deepEqual(selectConversationOrionMemory(session, [legacyMemory]), [legacyMemory]);
+  assert.deepEqual(selectConversationOrionMemory(session, [legacyMemory]), []);
   assert.deepEqual(selectConversationOrionMemory({ ...session, orionMemoryEntries: [scopedMemory] }, [legacyMemory]), [scopedMemory]);
+  assert.deepEqual(selectConversationOrionMemory(undefined, [legacyMemory]), [legacyMemory]);
 });
 
 test("removes project conversations without affecting other projects", () => {

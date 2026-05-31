@@ -1,10 +1,9 @@
-﻿import { useEffect, useMemo, useState } from "react";
+﻿import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useRef } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import "./App.css";
 import {
-  defaultSteps,
   formatWorkflowStepCompletionCriteria,
   getApprovalPrompt,
   getRollbackIndex,
@@ -19,10 +18,9 @@ import {
   type WorkflowStep,
 } from "./workflowState";
 import {
-  addWorkflow,
   createDefaultWorkflows,
+  createLeanDevelopmentSteps,
   deleteWorkflow,
-  duplicateWorkflow,
   migrateWorkflowDefinition,
   setDefaultWorkflow,
   updateWorkflow,
@@ -111,6 +109,7 @@ import {
   type OrionWorkflowObservation,
 } from "./orionWorkflowObserver";
 import { activityFloatShouldAutoExpand, activityFloatSummary, shouldCollapseActivityFloat } from "./activityFloat";
+import { parseChatImageMarkdown, type ChatImagePart } from "./chatImages";
 import {
   appendFreshOrionMemoryEntry,
   appendOrionMemoryEntry,
@@ -202,6 +201,8 @@ type ProviderConnectionResult = { ok: boolean; status: number; endpoint: string;
 type AgentRunResult = { owner: string; stage: string; endpoint: string; output: string; elapsed_ms: number; input_tokens: number; output_tokens: number; total_tokens: number };
 type AgentBinding = { role: string; provider_id: string; model: string; temperature: number };
 type ProviderSnapshot = { providers: ProviderConfig[]; agents: AgentBinding[] };
+type ChatMode = "orion" | "direct";
+type ChatMediaPreview = Extract<ChatImagePart, { kind: "image" | "video" }>;
 type WorkflowConfigSnapshot = { workflows: WorkflowDefinition[]; active_workflow_id: string };
 type AppSettings = { artifact_output_dir: string };
 type LocalConfigInspectionResult = { settings_path: string; artifact_output_dir: string; tasks_dir: string; current_project: string };
@@ -264,6 +265,31 @@ const providerProtocolLabels: Record<ProviderApiProtocol, string> = {
 
 const defaultProjectPath = "D:\\CodexProjects\\workflow-manager-mvp";
 const workflowStorageKey = "workflow-manager.workflows.v1";
+const providerStorageKey = "orx.providers.v1";
+const chatModeStorageKey = "orx.chat-mode.v1";
+const defaultProviderTemplates: ProviderConfig[] = [
+  { id: "astrdark-grok-imagine-image", name: "AstrDark Grok Imagine Image", kind: "openai-compatible", api_protocol: "custom-direct", base_url: "https://api.astrdark.cyou", use_proxy_route: false, proxy_url: "http://127.0.0.1:7897", model: "grok-imagine-image", api_key_ref: "ASTRDARK_API_KEY" },
+  { id: "sharedchat-codex", name: "SharedChat Code", kind: "openai-compatible", api_protocol: "custom-direct", base_url: "https://new.sharedchat.cc/code", use_proxy_route: false, proxy_url: "http://127.0.0.1:7897", model: "gpt-5.4", api_key_ref: "SHAREDCHAT_CODEX_API_KEY" },
+  { id: "gpt-local", name: "GPT Local", kind: "openai-compatible", api_protocol: "responses", base_url: "http://127.0.0.1:8317/v1", use_proxy_route: true, proxy_url: "http://127.0.0.1:7897", model: "gpt-5.5", api_key_ref: "GPT_LOCAL_API_KEY" },
+  { id: "provider-1780118391953", name: "GPT", kind: "openai-compatible", api_protocol: "responses", base_url: "https://api.openai.com/v1", use_proxy_route: true, proxy_url: "http://127.0.0.1:7897", model: "gpt-5.5", api_key_ref: "GPT_LOCAL_API_KEY" },
+  { id: "mimo-token-plan-cn", name: "Mimo Token Plan CN", kind: "anthropic", api_protocol: "anthropic-messages", base_url: "https://token-plan-sgp.xiaomimimo.com/anthropic", use_proxy_route: false, proxy_url: "http://127.0.0.1:7897", model: "mimo-v2.5-pro", api_key_ref: "ANTHROPIC_AUTH_TOKEN" },
+  { id: "provider-1780118263362", name: "百炼", kind: "openai-compatible", api_protocol: "anthropic-messages", base_url: "https://coding.dashscope.aliyuncs.com/v1", use_proxy_route: false, proxy_url: "http://127.0.0.1:7897", model: "qwen3.6-plus", api_key_ref: "ALY_LOCAL_API_KEY" },
+  { id: "mimo-token-plan", name: "Mimo Token Plan", kind: "anthropic-compatible", api_protocol: "anthropic-messages", base_url: "https://token-plan-sgp.xiaomimimo.com/anthropic", use_proxy_route: false, proxy_url: "http://127.0.0.1:7897", model: "mimo-v2.5-pro", api_key_ref: "MIMO_TOKEN_PLAN_API_KEY" },
+];
+
+function createDefaultProviderSnapshot(): ProviderSnapshot {
+  const orionProvider = defaultProviderTemplates[0];
+  const sharedchat = defaultProviderTemplates.find((provider) => provider.id === "sharedchat-codex") ?? orionProvider;
+  return {
+    providers: defaultProviderTemplates.map((provider) => ({ ...provider })),
+    agents: ["administrator", "product", "developer", "architect", "tester"].map((role) => ({
+      role,
+      provider_id: role === "administrator" ? orionProvider.id : sharedchat.id,
+      model: role === "administrator" ? orionProvider.model : sharedchat.model,
+      temperature: role === "product" ? 0.3 : 0.2,
+    })),
+  };
+}
 
 function createProviderDraft(index: number): ProviderConfig {
   const suffix = index + 1;
@@ -278,6 +304,110 @@ function createProviderDraft(index: number): ProviderConfig {
     model: "",
     api_key_ref: "",
   };
+}
+
+function isImageGenerationProvider(provider: ProviderConfig) {
+  const model = provider.model.toLowerCase();
+  return provider.api_protocol === "custom-direct" && (model.includes("image") || model.includes("imagine"));
+}
+
+function normalizeProviderSnapshot(snapshot: ProviderSnapshot): ProviderSnapshot {
+  const inputProviders = Array.isArray(snapshot.providers) ? snapshot.providers : [];
+  const inputAgents = Array.isArray(snapshot.agents) ? snapshot.agents : [];
+  const hadOrionProvider = inputProviders.some((provider) => provider.id === "astrdark-grok-imagine-image");
+  const providersById = new Map(defaultProviderTemplates.map((provider) => [provider.id, { ...provider }]));
+  for (const provider of inputProviders) {
+    if (!provider?.id) continue;
+    const existing = providersById.get(provider.id);
+    providersById.set(provider.id, {
+      ...(existing ?? provider),
+      ...provider,
+      api_protocol: provider.api_protocol || existing?.api_protocol || "responses",
+      base_url: provider.id === "sharedchat-codex"
+        ? "https://new.sharedchat.cc/code"
+        : provider.id === "astrdark-grok-imagine-image"
+          ? "https://api.astrdark.cyou"
+          : provider.base_url?.trim() ?? existing?.base_url ?? "",
+      proxy_url: provider.proxy_url?.trim() || existing?.proxy_url || "http://127.0.0.1:7897",
+    });
+  }
+  const providers = Array.from(providersById.values());
+  const providerIds = new Set(providers.map((provider) => provider.id));
+  const defaultSnapshot = createDefaultProviderSnapshot();
+  const agentsByRole = new Map<string, AgentBinding>();
+  for (const agent of inputAgents) {
+    const role = agent.role === "qa" ? "tester" : agent.role;
+    if (!role || !providerIds.has(agent.provider_id) || agentsByRole.has(role)) continue;
+    agentsByRole.set(role, { ...agent, role });
+  }
+  if (!hadOrionProvider) {
+    for (const agent of defaultSnapshot.agents) agentsByRole.set(agent.role, agent);
+  }
+  for (const agent of defaultSnapshot.agents) {
+    if (!agentsByRole.has(agent.role)) agentsByRole.set(agent.role, agent);
+  }
+  return {
+    providers: providers.map((provider) => ({
+      ...provider,
+      api_protocol: provider.api_protocol || "responses",
+      base_url: provider.base_url?.trim() ?? "",
+      proxy_url: provider.proxy_url?.trim() || "http://127.0.0.1:7897",
+    })),
+    agents: Array.from(agentsByRole.values()),
+  };
+}
+
+function loadProviderPreferences(storage: Storage | null | undefined): ProviderSnapshot | null {
+  if (!storage) return null;
+  try {
+    const raw = storage.getItem(providerStorageKey);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as ProviderSnapshot;
+    const snapshot = normalizeProviderSnapshot(parsed);
+    return snapshot.providers.length > 0 ? snapshot : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveProviderPreferences(storage: Storage | null | undefined, snapshot: ProviderSnapshot) {
+  if (!storage) return;
+  storage.setItem(providerStorageKey, JSON.stringify(normalizeProviderSnapshot(snapshot)));
+}
+
+function syncProviderModelToBindings(snapshot: ProviderSnapshot, provider: ProviderConfig): ProviderSnapshot {
+  return {
+    providers: snapshot.providers,
+    agents: snapshot.agents.map((agent) => agent.provider_id === provider.id ? { ...agent, model: provider.model } : agent),
+  };
+}
+
+function snapshotWithAgentBinding(snapshot: ProviderSnapshot, binding: AgentBinding, provider?: ProviderConfig): ProviderSnapshot {
+  const normalized = normalizeProviderSnapshot(snapshot);
+  const providers = provider && !normalized.providers.some((item) => item.id === provider.id)
+    ? [...normalized.providers, provider]
+    : provider
+      ? normalized.providers.map((item) => item.id === provider.id ? provider : item)
+      : normalized.providers;
+  return normalizeProviderSnapshot({
+    providers,
+    agents: [
+      ...normalized.agents.filter((agent) => agent.role !== binding.role),
+      binding,
+    ],
+  });
+}
+
+function preferredProviderFromSnapshot(snapshot: ProviderSnapshot) {
+  const orionBinding = snapshot.agents.find((agent) => agent.role === "administrator");
+  return snapshot.providers.find((provider) => provider.id === orionBinding?.provider_id) ?? snapshot.providers[0];
+}
+
+function preferredBindingForProvider(snapshot: ProviderSnapshot, provider?: ProviderConfig) {
+  return snapshot.agents.find((agent) => agent.role === "administrator" && agent.provider_id === provider?.id)
+    ?? snapshot.agents.find((agent) => agent.provider_id === provider?.id)
+    ?? snapshot.agents.find((agent) => agent.role === "administrator")
+    ?? snapshot.agents[0];
 }
 
 function loadWorkflowPreferences() {
@@ -297,6 +427,11 @@ function loadWorkflowPreferences() {
 
 function canUseTauriCommands() {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+}
+
+function loadChatMode(storage: Storage | null): ChatMode {
+  const value = storage?.getItem(chatModeStorageKey);
+  return value === "direct" ? "direct" : "orion";
 }
 
 function formatDuration(ms: number) {
@@ -378,9 +513,10 @@ function App() {
   const [summary, setSummary] = useState<ProjectSummary | null>(null);
   const [workflows, setWorkflows] = useState<WorkflowDefinition[]>(initialWorkflowPreferences.workflows);
   const [activeWorkflowId, setActiveWorkflowId] = useState(initialWorkflowPreferences.activeWorkflowId);
-  const [providerSnapshot, setProviderSnapshot] = useState<ProviderSnapshot>({ providers: [], agents: [] });
-  const [providerForm, setProviderForm] = useState<ProviderConfig>({ id: "gpt-local", name: "GPT Local", kind: "openai-compatible", api_protocol: "responses", base_url: "http://127.0.0.1:8317/v1", use_proxy_route: true, proxy_url: "http://127.0.0.1:7897", model: "gpt-5.5", api_key_ref: "GPT_LOCAL_API_KEY" });
-  const [agentForm, setAgentForm] = useState<AgentBinding>({ role: "developer", provider_id: "gpt-local", model: "gpt-5.5", temperature: 0.2 });
+  const initialProviderSnapshot = useMemo(() => createDefaultProviderSnapshot(), []);
+  const [providerSnapshot, setProviderSnapshot] = useState<ProviderSnapshot>(initialProviderSnapshot);
+  const [providerForm, setProviderForm] = useState<ProviderConfig>(initialProviderSnapshot.providers[0]);
+  const [agentForm, setAgentForm] = useState<AgentBinding>(initialProviderSnapshot.agents[0]);
   const [inspectorView, setInspectorView] = useState<InspectorView>("output");
   const [inspectorCollapsed, setInspectorCollapsed] = useState(true);
   const [configPanel, setConfigPanel] = useState<ConfigPanel>(null);
@@ -421,6 +557,7 @@ function App() {
   const [workflowNodeFailure, setWorkflowNodeFailure] = useState<WorkflowNodeFailure | null>(null);
   const [orionSkills, setOrionSkills] = useState<OrionSkill[]>([]);
   const [orionAccessMode, setOrionAccessMode] = useState<OrionAccessMode>("default");
+  const [chatMode, setChatMode] = useState<ChatMode>(() => loadChatMode(typeof window === "undefined" ? null : window.localStorage));
   const [activityFloatExpanded, setActivityFloatExpanded] = useState(true);
   const [activityFloatChangedAt, setActivityFloatChangedAt] = useState(Date.now());
   const activityFloatSignatureRef = useRef("");
@@ -437,11 +574,17 @@ function App() {
   const [contextMenu, setContextMenu] = useState<ContextMenuState>(null);
   const [error, setError] = useState("");
   const [copiedMessageKey, setCopiedMessageKey] = useState("");
+  const [chatMediaPreview, setChatMediaPreview] = useState<ChatMediaPreview | null>(null);
 
   const fileTree = useMemo(() => buildFileTree(summary?.files ?? []), [summary]);
   const workspaceFilePaths = useMemo(() => new Set(workspaceFiles.map((file) => file.path)), [workspaceFiles]);
   const activeWorkflow = useMemo(() => workflows.find((workflow) => workflow.id === activeWorkflowId), [workflows, activeWorkflowId]);
   const steps = activeWorkflow?.steps ?? [];
+  const orionDriverBinding = useMemo(() => providerSnapshot.agents.find((agent) => agent.role === "administrator"), [providerSnapshot.agents]);
+  const orionDriverProvider = useMemo(
+    () => providerSnapshot.providers.find((provider) => provider.id === orionDriverBinding?.provider_id),
+    [orionDriverBinding?.provider_id, providerSnapshot.providers],
+  );
   const stageOptions = useMemo(() => createWorkflowStageOptions(steps), [steps]);
   const latestOutput = logLines.slice(-28);
   const chatTimelineItems = useMemo(() => toChatTimelineItems(chatLines), [chatLines]);
@@ -529,11 +672,22 @@ function App() {
     saveOrionAccessMode(window.localStorage, orionAccessMode);
   }, [orionAccessMode]);
   useEffect(() => {
+    window.localStorage.setItem(chatModeStorageKey, chatMode);
+  }, [chatMode]);
+  useEffect(() => {
     setConversations((items) => updateConversationContent(items, activeConversationId, chatLines, logLines, { orionMemoryEntries }));
   }, [activeConversationId, chatLines, logLines, orionMemoryEntries]);
   useEffect(() => {
     saveConversationStore(window.localStorage, { activeConversationId, conversations });
   }, [activeConversationId, conversations]);
+  useEffect(() => {
+    if (!chatMediaPreview) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setChatMediaPreview(null);
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [chatMediaPreview]);
   useEffect(() => {
     if (!activityFloatSignature) return;
     const previousSignature = activityFloatSignatureRef.current;
@@ -576,15 +730,27 @@ function App() {
   async function loadProviderConfig() {
     try {
       const snapshot = await invoke<ProviderSnapshot>("get_provider_config");
-      setProviderSnapshot(snapshot);
-      if (snapshot.providers.length > 0) {
-        const provider = snapshot.providers[0];
+      const normalizedSnapshot = normalizeProviderSnapshot(snapshot);
+      setProviderSnapshot(normalizedSnapshot);
+      saveProviderPreferences(window.localStorage, normalizedSnapshot);
+      if (normalizedSnapshot.providers.length > 0) {
+        const provider = preferredProviderFromSnapshot(normalizedSnapshot);
         setProviderForm(provider);
-        const binding = snapshot.agents.find((agent) => agent.provider_id === provider.id) ?? snapshot.agents[0];
+        const binding = preferredBindingForProvider(normalizedSnapshot, provider);
         if (binding) setAgentForm(binding);
       }
-      setLogLines((lines) => [...lines, `已加载 ${snapshot.providers.length} 个 Provider 配置。`]);
+      setLogLines((lines) => [...lines, `已加载 ${normalizedSnapshot.providers.length} 个 Provider 配置。`]);
     } catch {
+      const snapshot = loadProviderPreferences(window.localStorage);
+      if (snapshot) {
+        setProviderSnapshot(snapshot);
+        const provider = preferredProviderFromSnapshot(snapshot);
+        setProviderForm(provider);
+        const binding = preferredBindingForProvider(snapshot, provider);
+        if (binding) setAgentForm(binding);
+        setLogLines((lines) => [...lines, `已从浏览器缓存加载 ${snapshot.providers.length} 个 Provider 配置。`]);
+        return;
+      }
       setLogLines((lines) => [...lines, "浏览器预览模式：Provider 配置需要在 Tauri 客户端中持久化。"]);
     }
   }
@@ -593,9 +759,12 @@ function App() {
     try {
       const snapshot = await invoke<WorkflowConfigSnapshot | null>("get_workflow_config");
       if (!snapshot || snapshot.workflows.length === 0) return;
-      setWorkflows(snapshot.workflows);
-      setActiveWorkflowId(snapshot.active_workflow_id && snapshot.workflows.some((workflow) => workflow.id === snapshot.active_workflow_id) ? snapshot.active_workflow_id : "");
-      setLogLines((lines) => [...lines, `已加载 ${snapshot.workflows.length} 个本地工作流配置。`]);
+      const savedWorkflows = snapshot.workflows.map(migrateWorkflowDefinition);
+      const activeId = snapshot.active_workflow_id && savedWorkflows.some((workflow) => workflow.id === snapshot.active_workflow_id) ? snapshot.active_workflow_id : "";
+      setWorkflows(savedWorkflows);
+      setActiveWorkflowId(activeId);
+      window.localStorage.setItem(workflowStorageKey, JSON.stringify({ workflows: savedWorkflows, activeWorkflowId: activeId }));
+      setLogLines((lines) => [...lines, `已加载 ${savedWorkflows.length} 个本地工作流配置。`]);
     } catch {
       setLogLines((lines) => [...lines, "浏览器预览模式：工作流配置使用本地浏览器缓存；客户端会写入 workflows.json。"]);
     }
@@ -687,14 +856,26 @@ function App() {
     setSavingConfig(true);
     try {
       const snapshot = await invoke<ProviderSnapshot>("save_provider", { input: providerForm });
-      setProviderSnapshot(snapshot);
-      const savedProvider = snapshot.providers.find((provider) => provider.id === providerForm.id);
+      const normalizedSnapshot = syncProviderModelToBindings(normalizeProviderSnapshot(snapshot), providerForm);
+      setProviderSnapshot(normalizedSnapshot);
+      saveProviderPreferences(window.localStorage, normalizedSnapshot);
+      const savedProvider = normalizedSnapshot.providers.find((provider) => provider.id === providerForm.id);
       if (savedProvider) setProviderForm(savedProvider);
+      setAgentForm((current) => current.provider_id === providerForm.id ? { ...current, model: providerForm.model } : current);
       setLogLines((lines) => [...lines, `Provider 已保存：${providerForm.name}`]);
     } catch (saveError) {
       const message = saveError instanceof Error ? saveError.message : String(saveError);
+      const fallbackSnapshot = syncProviderModelToBindings(normalizeProviderSnapshot({
+        providers: providerSnapshot.providers.some((provider) => provider.id === providerForm.id)
+          ? providerSnapshot.providers.map((provider) => provider.id === providerForm.id ? providerForm : provider)
+          : [...providerSnapshot.providers, providerForm],
+        agents: providerSnapshot.agents,
+      }), providerForm);
+      setProviderSnapshot(fallbackSnapshot);
+      saveProviderPreferences(window.localStorage, fallbackSnapshot);
+      setAgentForm((current) => current.provider_id === providerForm.id ? { ...current, model: providerForm.model } : current);
       setError(message);
-      setLogLines((lines) => [...lines, `保存 Provider 失败：${message}`]);
+      setLogLines((lines) => [...lines, `保存 Provider 到 Tauri 文件失败，已写入浏览器缓存：${message}`]);
     } finally {
       setSavingConfig(false);
     }
@@ -752,12 +933,17 @@ function App() {
       const saved = await invoke<WorkflowConfigSnapshot>("save_workflow_config", {
         input: { workflows, active_workflow_id: activeWorkflowId },
       });
-      window.localStorage.setItem(workflowStorageKey, JSON.stringify({ workflows: saved.workflows, activeWorkflowId: saved.active_workflow_id }));
-      setLogLines((lines) => [...lines, `工作流配置已保存：${saved.workflows.length} 个。`]);
+      const savedWorkflows = saved.workflows.map(migrateWorkflowDefinition);
+      const activeId = saved.active_workflow_id && savedWorkflows.some((workflow) => workflow.id === saved.active_workflow_id) ? saved.active_workflow_id : "";
+      setWorkflows(savedWorkflows);
+      setActiveWorkflowId(activeId);
+      window.localStorage.setItem(workflowStorageKey, JSON.stringify({ workflows: savedWorkflows, activeWorkflowId: activeId }));
+      setLogLines((lines) => [...lines, `工作流配置已保存：${savedWorkflows.length} 个。`]);
     } catch (saveError) {
       const message = saveError instanceof Error ? saveError.message : String(saveError);
+      window.localStorage.setItem(workflowStorageKey, JSON.stringify({ workflows, activeWorkflowId }));
       setError(message);
-      setLogLines((lines) => [...lines, `保存工作流配置失败：${message}`]);
+      setLogLines((lines) => [...lines, `保存工作流到 Tauri 文件失败，已写入浏览器缓存：${message}`]);
     } finally {
       setSavingConfig(false);
     }
@@ -773,12 +959,47 @@ function App() {
     setError("");
     try {
       const snapshot = await invoke<ProviderSnapshot>("bind_agent_provider", { input: agentForm });
-      setProviderSnapshot(snapshot);
+      const normalizedSnapshot = normalizeProviderSnapshot(snapshot);
+      setProviderSnapshot(normalizedSnapshot);
+      saveProviderPreferences(window.localStorage, normalizedSnapshot);
       setLogLines((lines) => [...lines, `${roleLabels[agentForm.role]} Agent 已绑定：${agentForm.provider_id}`]);
     } catch (bindError) {
       const message = bindError instanceof Error ? bindError.message : String(bindError);
       setError(message);
       setLogLines((lines) => [...lines, `绑定 Agent 失败：${message}`]);
+    }
+  }
+
+  async function bindOrionDriverToCurrentProvider() {
+    setError("");
+    const input: AgentBinding = {
+      role: "administrator",
+      provider_id: providerForm.id,
+      model: providerForm.model,
+      temperature: 0.2,
+    };
+    const optimisticSnapshot = snapshotWithAgentBinding(providerSnapshot, input, providerForm);
+    setProviderSnapshot(optimisticSnapshot);
+    saveProviderPreferences(window.localStorage, optimisticSnapshot);
+    setAgentForm(input);
+    try {
+      const providerAlreadySaved = providerSnapshot.providers.some((provider) => provider.id === providerForm.id);
+      const savedSnapshot = providerAlreadySaved
+        ? providerSnapshot
+        : await invoke<ProviderSnapshot>("save_provider", { input: providerForm });
+      const snapshot = await invoke<ProviderSnapshot>("bind_agent_provider", { input });
+      const normalizedSnapshot = snapshotWithAgentBinding({
+        providers: normalizeProviderSnapshot(savedSnapshot).providers,
+        agents: normalizeProviderSnapshot(snapshot).agents,
+      }, input, providerForm);
+      setProviderSnapshot(normalizedSnapshot);
+      saveProviderPreferences(window.localStorage, normalizedSnapshot);
+      setAgentForm(input);
+      setLogLines((lines) => [...lines, `ORION 驾驶员模型已绑定：${providerForm.name} / ${providerForm.model}`]);
+    } catch (bindError) {
+      const message = bindError instanceof Error ? bindError.message : String(bindError);
+      setError(message);
+      setLogLines((lines) => [...lines, `绑定 ORION 驾驶员模型失败：${message}`]);
     }
   }
 
@@ -791,7 +1012,9 @@ function App() {
           input: { role, provider_id: providerForm.id, model: providerForm.model, temperature: role === "product" ? 0.3 : 0.2 },
         });
       }
-      setProviderSnapshot(snapshot);
+      const normalizedSnapshot = normalizeProviderSnapshot(snapshot);
+      setProviderSnapshot(normalizedSnapshot);
+      saveProviderPreferences(window.localStorage, normalizedSnapshot);
       setAgentForm({ ...agentForm, provider_id: providerForm.id, model: providerForm.model });
       setLogLines((lines) => [...lines, `全部 Agent 已绑定到：${providerForm.name} / ${providerForm.model}`]);
     } catch (bindError) {
@@ -872,16 +1095,6 @@ function App() {
     }
   }
 
-  async function loadWorkflowBlueprint() {
-    try {
-      const blueprint = await invoke<WorkflowStep[]>("workflow_blueprint");
-      setWorkflows((items) => updateWorkflowSteps(items, activeWorkflowId, blueprint.map((step) => ({ ...step, enabled: true, approval: "none" }))));
-      setLogLines((lines) => [...lines, "> workflow_blueprint loaded", "已加载场景预演 -> 边界探测 -> 红蓝对抗 -> 测试计划 -> 复盘流程。"]);
-    } catch {
-      setLogLines((lines) => [...lines, "> workflow_blueprint fallback", "当前处于浏览器预览模式，使用前端内置流程蓝图。"]);
-    }
-  }
-
   function ownerToRole(owner: string) {
     if (owner.includes("PM") || owner.includes("管理员")) return "administrator";
     if (owner.includes("PD") || owner.includes("产品")) return "product";
@@ -895,6 +1108,30 @@ function App() {
     const binding = providerSnapshot.agents.find((agent) => agent.role === role);
     const provider = providerSnapshot.providers.find((item) => item.id === binding?.provider_id) ?? providerForm;
     return { ...provider, model: binding?.model ?? provider.model };
+  }
+
+  async function runDirectModelConversation(message: string) {
+    if (!canUseTauriCommands()) {
+      setChatLines((lines) => [...lines, "直连模型需要在 ORX 客户端中运行，浏览器预览无法调用本机 Provider。"]);
+      setLogLines((lines) => [...lines, "直连模型调用跳过：Tauri command 不可用。"]);
+      return;
+    }
+    setOrionChatRunning(true);
+    try {
+      const provider = providerInputForRole("administrator");
+      const result = await invoke<AgentRunResult>("run_provider_direct", {
+        input: { provider, message },
+      });
+      const output = result.output.trim() || "模型已完成，但没有返回内容。";
+      setChatLines((lines) => [...lines, output]);
+      setLogLines((lines) => [...lines, `直连模型完成：${provider.name} / ${provider.model}`, result.endpoint]);
+    } catch (directError) {
+      const message = directError instanceof Error ? directError.message : String(directError);
+      setChatLines((lines) => [...lines, `直连模型调用失败：${message}`]);
+      setLogLines((lines) => [...lines, `直连模型调用失败：${message}`]);
+    } finally {
+      setOrionChatRunning(false);
+    }
   }
 
   function providerEndpoint(provider: ProviderConfig) {
@@ -1034,16 +1271,30 @@ function App() {
   }
 
   function resetConversationRuntimeState() {
+    setWorkflowRunning(false);
+    workflowStopRequestedRef.current = false;
+    lastStoppedWorkflowRef.current = { task: "", at: 0 };
     setWorkflowMetrics([]);
     setWorkflowStartedAt(null);
     setTaskArchive(null);
     setApprovalGate(null);
+    setClarificationGate(null);
+    setOrionObservationGate(null);
+    setOrionPendingPlan(null);
+    setOrionPendingAssistant(null);
+    setOrionSuggestions([]);
     setApprovalNote("");
     setCurrentActivity("");
     setOrionActivityRun(null);
+    setOrionAssistantActionCount(0);
+    setOrionChatRunning(false);
+    setActivityFloatExpanded(true);
+    setActivityFloatChangedAt(Date.now());
+    activityFloatSignatureRef.current = "";
     setWorkflowNodeFailure(null);
     setPendingAttachments([]);
     setComposerDragActive(false);
+    setCopiedMessageKey("");
     setError("");
   }
 
@@ -1316,6 +1567,13 @@ function App() {
       }
       setChatLines((lines) => [...lines, `你：${text}`, "ORCH：当前正在等待审批。请回复“同意/批准/通过”继续，或回复“否决/打回/不通过”回滚重做。"]);
       setRequirement("");
+      return;
+    }
+    if (chatMode === "direct") {
+      setRequirement("");
+      setPendingAttachments([]);
+      setChatLines((lines) => [...lines, `你：${taskText}`]);
+      await runDirectModelConversation(taskText);
       return;
     }
     const orionCommand = parseOrionCommand(text, false);
@@ -1847,6 +2105,7 @@ function App() {
           processContext: currentOrionProcessContext(),
         }),
       });
+      if (isImageGenerationProvider(provider)) return result.output.startsWith("ORION：") ? result.output : `ORION：${result.output}`;
       return normalizeOrionChatOutput(result.output);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -2939,30 +3198,13 @@ function App() {
     setWorkflows((items) => updateWorkflowSteps(items, activeWorkflowId, nextSteps));
   }
 
-  function addWorkflowStep() {
-    setWorkflows((items) => updateWorkflowSteps(items, activeWorkflowId, [...steps, { stage: `Step${steps.length + 1}`, owner: "PM Agent", instruction: "描述这个步骤要产出的内容、检查点和打回条件。", enabled: true, approval: "none" }]));
-  }
-
   function removeWorkflowStep(index: number) {
     setWorkflows((items) => updateWorkflowSteps(items, activeWorkflowId, steps.filter((_, stepIndex) => stepIndex !== index)));
   }
 
   function resetWorkflowSteps() {
-    setWorkflows((items) => updateWorkflowSteps(items, activeWorkflowId, defaultSteps));
-    setLogLines((lines) => [...lines, "> workflow_config reset", `已恢复 ${activeWorkflow?.name ?? "当前工作流"} 的默认完整步骤。`]);
-  }
-
-  function createWorkflow() {
-    const result = addWorkflow(workflows);
-    setWorkflows(result.workflows);
-    setActiveWorkflowId(result.activeWorkflowId);
-  }
-
-  function copyWorkflow(workflowId = activeWorkflowId) {
-    const result = duplicateWorkflow(workflows, workflowId);
-    setWorkflows(result.workflows);
-    setActiveWorkflowId(result.activeWorkflowId);
-    setContextMenu(null);
+    setWorkflows((items) => updateWorkflowSteps(items, activeWorkflowId, createLeanDevelopmentSteps()));
+    setLogLines((lines) => [...lines, "> workflow_config reset", `已恢复 ${activeWorkflow?.name ?? "当前工作流"} 的 FORGE 两节点流程。`]);
   }
 
   async function copyChatMessage(text: string, messageKey: string) {
@@ -3000,6 +3242,26 @@ function App() {
       title={copied ? "已复制" : "复制"}
       onClick={() => { void copyChatMessage(text, messageKey); }}
     >{copied ? "✓" : "⧉"}</button>;
+  }
+
+  function renderChatMessageContent(text: string) {
+    const parts = parseChatImageMarkdown(text);
+    if (parts.length === 1 && parts[0].kind === "text") return parts[0].text;
+    return parts.map((part, index) => {
+      if (part.kind === "text") return part.text;
+      const label = part.kind === "video" ? "打开视频预览" : "打开图片预览";
+      return (
+        <figure className={`chat-image-result ${part.kind}`} key={`${part.kind}-${index}-${part.src.slice(0, 24)}`}>
+          <button type="button" className="chat-media-preview-trigger" aria-label={label} title={label} onClick={() => setChatMediaPreview(part)}>
+            {part.kind === "video"
+              ? <video src={part.src} preload="metadata" muted />
+              : <img src={part.src} alt={part.alt} loading="lazy" />}
+            {part.kind === "video" && <span className="chat-video-play-indicator">▶</span>}
+          </button>
+          <figcaption>{part.alt}</figcaption>
+        </figure>
+      );
+    });
   }
 
   function removeWorkflow(workflowId = activeWorkflowId) {
@@ -3256,8 +3518,8 @@ function App() {
             {chatTimelineItems.map((item, index) => {
               const messageKey = `chat-${item.side}-${index}`;
               return item.side === "user"
-                ? <article className="user-message-row" key={`chat-${item.text}-${index}`} onMouseLeave={() => setCopiedMessageKey((current) => current === messageKey ? "" : current)}><div className="user-message-bubble"><span>{item.text}</span></div><div className="message-copy-actions">{renderCopyMessageButton(item.text, messageKey)}</div></article>
-                : <p className={item.tone === "error" ? "error-line" : "system-line"} key={`chat-${item.text}-${index}`} onMouseLeave={() => setCopiedMessageKey((current) => current === messageKey ? "" : current)}><span>$</span><span className="line-text"><span>{item.text}</span></span><span className="message-copy-actions">{renderCopyMessageButton(item.text, messageKey)}</span></p>;
+                ? <article className="user-message-row" key={`chat-${item.text}-${index}`} onMouseLeave={() => setCopiedMessageKey((current) => current === messageKey ? "" : current)}><div className="user-message-bubble"><div className="message-content">{renderChatMessageContent(item.text)}</div></div><div className="message-copy-actions">{renderCopyMessageButton(item.text, messageKey)}</div></article>
+                : <p className={item.tone === "error" ? "error-line" : "system-line"} key={`chat-${item.text}-${index}`} onMouseLeave={() => setCopiedMessageKey((current) => current === messageKey ? "" : current)}><span>$</span><span className="line-text"><span className="message-content">{renderChatMessageContent(item.text)}</span></span><span className="message-copy-actions">{renderCopyMessageButton(item.text, messageKey)}</span></p>;
             })}
             {(workflowRunning || approvalGate || clarificationGate || orionObservationGate || orionAssistantRunning || orionChatRunning) && <p className="thinking-line" aria-live="polite"><span>$</span><span className="thinking-content">{orionChatRunning ? "ORION 正在等待模型回复" : orionAssistantRunning ? assistantActivityLine(orionAssistantActionCount) : currentActivity || "ORCH 处理中"}{(workflowRunning || orionAssistantRunning || orionChatRunning) && <><i></i><i></i><i></i></>}</span></p>}
           </div>
@@ -3343,8 +3605,12 @@ function App() {
               <button type="button" aria-label={`移除附件 ${attachment.name}`} onClick={() => removePendingAttachment(attachment.id)}>×</button>
             </div>)}
           </div>}
-          <textarea value={requirement} disabled={orionAssistantRunning || orionChatRunning} placeholder={orionChatRunning ? "ORION 正在等待模型回复" : orionAssistantRunning ? "ORION 正在执行本机助手动作" : orionObservationGate ? "回复 ORION 的观察问题，或输入“继续”推进" : clarificationGate ? "直接回答 Trellis 的澄清问题" : "告诉 ORION 你想做什么，或粘贴/拖入文件"} onPaste={handleComposerPaste} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} onChange={(event) => setRequirement(event.target.value)} aria-label="需求描述" />
+          <textarea value={requirement} disabled={orionAssistantRunning || orionChatRunning} placeholder={orionChatRunning ? (chatMode === "direct" ? "模型正在回复" : "ORION 正在等待模型回复") : orionAssistantRunning ? "ORION 正在执行本机助手动作" : orionObservationGate ? "回复 ORION 的观察问题，或输入“继续”推进" : clarificationGate ? "直接回答 Trellis 的澄清问题" : chatMode === "direct" ? "直接发送给当前模型，不附加 ORION 上下文" : "告诉 ORION 你想做什么，或粘贴/拖入文件"} onPaste={handleComposerPaste} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} onChange={(event) => setRequirement(event.target.value)} aria-label="需求描述" />
           <div className="composer-toolbar">
+            <div className="chat-mode-switch" aria-label="对话模式">
+              <button type="button" className={chatMode === "orion" ? "active" : ""} aria-pressed={chatMode === "orion"} onClick={() => setChatMode("orion")}>ORION</button>
+              <button type="button" className={chatMode === "direct" ? "active" : ""} aria-pressed={chatMode === "direct"} onClick={() => setChatMode("direct")}>直连模型</button>
+            </div>
             <div className="template-picker" onClick={(event) => event.stopPropagation()}>
               <button type="button" aria-haspopup="listbox" aria-expanded={workflowMenuOpen} onClick={() => setWorkflowMenuOpen((open) => !open)}>{activeWorkflow?.name ?? "ORION 自动判断"}</button>
               {workflowMenuOpen && <div className="template-menu" role="listbox">
@@ -3439,7 +3705,7 @@ function App() {
         </>}
         {contextMenu.kind === "conversation" && <button type="button" onClick={() => deleteConversation(contextMenu.conversation)}>删除对话</button>}
         {contextMenu.kind === "workflow" && <>
-          <button type="button" onClick={() => copyWorkflow(contextMenu.workflow.id)}>复制</button>
+          <button type="button" disabled title="临时关闭：当前只启用 FORGE 两节点流程">复制（暂不可用）</button>
           <button type="button" onClick={() => makeWorkflowDefault(contextMenu.workflow.id)} disabled={contextMenu.workflow.isDefault}>设为默认</button>
           <button type="button" onClick={() => removeWorkflow(contextMenu.workflow.id)} disabled={contextMenu.workflow.isDefault}>删除</button>
         </>}
@@ -3465,7 +3731,7 @@ function App() {
 
       {configPanel && <div className="config-backdrop" role="dialog" aria-modal="true" aria-label={configPanelTitle(configPanel)}>
         <section className="config-sheet">
-          <header><h2>{configPanelTitle(configPanel)}</h2><div className="config-header-actions"><button type="button" onClick={() => { void saveCurrentConfigPanel(); }} disabled={savingConfig}>{savingConfig ? "保存中..." : "保存"}</button><button className="icon-button" type="button" aria-label="关闭配置弹窗" title="关闭" onClick={() => setConfigPanel(null)}>×</button></div></header>
+          <header><h2>{configPanelTitle(configPanel)}</h2><div className="config-header-actions">{configPanel !== "provider" && <button type="button" onClick={() => { void saveCurrentConfigPanel(); }} disabled={savingConfig}>{savingConfig ? "保存中..." : "保存"}</button>}<button className="icon-button" type="button" aria-label="关闭配置弹窗" title="关闭" onClick={() => setConfigPanel(null)}>×</button></div></header>
           {configPanel === "provider" && <div className="provider-manager config-content">
             <aside className="provider-list-panel">
               <div className="provider-list">
@@ -3492,6 +3758,14 @@ function App() {
               <button type="button" onClick={testCurrentProvider} disabled={testingProvider}>{testingProvider ? "测试中..." : "测试连接"}</button>
               {providerTestResult && <div className={providerTestResult.ok ? "test-result ok" : "test-result fail"}><strong>{providerTestResult.ok ? "连接正常" : "连接失败"} · {providerTestResult.status}</strong><span>{providerTestResult.endpoint}</span><p>{providerTestResult.message}</p></div>}
               <div className="config-action-row"><button type="button" onClick={saveProviderConfig} disabled={savingConfig}>保存模型服务</button><button type="button" className="danger-button" onClick={() => { void deleteCurrentProvider(); }} disabled={savingConfig || providerSnapshot.providers.length <= 1}>删除当前模型服务</button></div>
+              <section className="orion-driver-model-card">
+                <div>
+                  <strong>ORION 驾驶员模型</strong>
+                  <span>{orionDriverProvider ? `${orionDriverProvider.name} · ${orionDriverBinding?.model || orionDriverProvider.model}` : "尚未绑定"}</span>
+                  <p>放在模型服务里做全局配置：普通聊天、意图判断、工具规划和工作流驾驶都先走这里；工作流节点仍可单独绑定角色模型。</p>
+                </div>
+                <button type="button" onClick={() => { void bindOrionDriverToCurrentProvider(); }}>设当前模型为 ORION</button>
+              </section>
               <div className="inline-grid"><select aria-label="绑定角色" value={agentForm.role} onChange={(event) => setAgentForm({ ...agentForm, role: event.target.value })}>{Object.entries(roleLabels).map(([role, label]) => <option key={role} value={role}>{label} Agent · {roleDescriptions[role]}</option>)}</select><select aria-label="绑定 Provider" value={agentForm.provider_id} onChange={(event) => setAgentForm({ ...agentForm, provider_id: event.target.value })}>{providerSnapshot.providers.map((provider) => <option key={provider.id} value={provider.id}>{provider.name} · {provider.model}</option>)}{!providerSnapshot.providers.some((provider) => provider.id === providerForm.id) && <option value={providerForm.id}>{providerForm.name || "未保存模型配置"}</option>}</select></div>
               <button type="button" onClick={bindAgentProvider}>绑定 Agent</button>
               <button type="button" onClick={bindAllAgentsToCurrentProvider}>绑定全部 Agent 到当前 Provider</button>
@@ -3524,7 +3798,7 @@ function App() {
                 </button>)}
               </div>
               <div className="workflow-list-actions">
-                <button type="button" onClick={createWorkflow}>新建工作流</button>
+                <button type="button" disabled title="临时关闭：当前只启用 FORGE 开发 / CodeReview 两节点">新建工作流（暂不可用）</button>
               </div>
             </aside>
             <section className="flow-list">
@@ -3536,7 +3810,7 @@ function App() {
                 <label><span>工作流名称</span><input value={activeWorkflow?.name ?? ""} onChange={(event) => updateActiveWorkflow({ name: event.target.value })} /></label>
                 <label><span>说明</span><textarea value={activeWorkflow?.description ?? ""} onChange={(event) => updateActiveWorkflow({ description: event.target.value })} /></label>
               </div>
-              <div className="flow-toolbar"><button type="button" onClick={addWorkflowStep}>新增步骤</button><button type="button" onClick={resetWorkflowSteps}>恢复默认步骤</button><button type="button" onClick={loadWorkflowBlueprint}>读取后端蓝图</button></div>
+              <div className="flow-toolbar"><button type="button" disabled title="临时关闭：当前只启用开发和代码审查两个节点">新增步骤（暂不可用）</button><button type="button" onClick={resetWorkflowSteps}>恢复 FORGE 两节点</button></div>
               {steps.map((step, index) => <article className="workflow-step" key={`${step.stage}-${index}`}>
                 <div className="step-header"><label className="toggle-row"><input type="checkbox" checked={step.enabled !== false} onChange={(event) => updateWorkflowStep(index, { enabled: event.target.checked })} /><span>{index + 1}. 启用</span></label><div className="step-actions"><button type="button" onClick={() => moveWorkflowStep(index, -1)} disabled={index === 0}>上移</button><button type="button" onClick={() => moveWorkflowStep(index, 1)} disabled={index === steps.length - 1}>下移</button><button type="button" onClick={() => removeWorkflowStep(index)}>删除</button></div></div>
                 <div className="inline-grid"><label><span>阶段</span><select value={`${step.owner}/${step.stage}`} onChange={(event) => { const option = stageOptions.find((item) => `${item.owner}/${item.stage}` === event.target.value); if (option) updateWorkflowStep(index, { stage: option.stage, owner: option.owner }); }}>{stageOptions.map((option) => <option key={`${option.owner}/${option.stage}`} value={`${option.owner}/${option.stage}`}>{option.label}</option>)}</select></label><label><span>负责人</span><select value={step.owner} onChange={(event) => updateWorkflowStep(index, { owner: event.target.value })}>{agentOwners.map((owner) => <option key={owner} value={owner}>{owner}</option>)}</select></label></div>
@@ -3596,6 +3870,16 @@ function App() {
             <section className="settings-group"><h3>密钥读取</h3><div className="setting-row"><span>当前引用名</span><em>{providerForm.api_key_ref}</em></div><div className="setting-row"><span>读取顺序</span><em>先读环境变量，读不到再读用户密钥文件</em></div><div className="setting-row"><span>密钥文件</span><em>%APPDATA%\ORX\secrets.json</em></div><div className="setting-row"><span>后续增强</span><em>迁移到系统 keychain，避免明文文件</em></div></section>
           </div>}
         </section>
+      </div>}
+
+      {chatMediaPreview && <div className="chat-media-backdrop" role="dialog" aria-modal="true" aria-label={chatMediaPreview.alt} onClick={() => setChatMediaPreview(null)}>
+        <div className="chat-media-modal" onClick={(event) => event.stopPropagation()}>
+          <button type="button" className="chat-media-close" aria-label="关闭预览" title="关闭" onClick={() => setChatMediaPreview(null)}>×</button>
+          {chatMediaPreview.kind === "video"
+            ? <video src={chatMediaPreview.src} controls autoPlay className="chat-media-full" />
+            : <img src={chatMediaPreview.src} alt={chatMediaPreview.alt} className="chat-media-full" />}
+          <figcaption>{chatMediaPreview.alt}</figcaption>
+        </div>
       </div>}
     </main>
   );

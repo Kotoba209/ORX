@@ -1128,7 +1128,7 @@ h2 {
 
 .flow-toolbar {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -1500,6 +1500,56 @@ h2 {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
+}
+
+.orion-driver-model-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  padding: 14px;
+  border: 1px solid #dedbff;
+  border-radius: 8px;
+  background: #f7f5ff;
+}
+
+.orion-driver-model-card strong,
+.orion-driver-model-card span,
+.orion-driver-model-card p {
+  display: block;
+}
+
+.orion-driver-model-card strong {
+  color: #25203f;
+  font-size: 14px;
+}
+
+.orion-driver-model-card span {
+  margin-top: 4px;
+  color: #5f55f2;
+  font-weight: 700;
+}
+
+.orion-driver-model-card p {
+  margin: 8px 0 0;
+  color: #6f7081;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.orion-driver-model-card button {
+  width: auto;
+  min-width: 128px;
+  border-color: #5f55f2;
+  background: #5f55f2;
+  color: #ffffff;
+  box-shadow: 0 12px 24px rgba(95, 85, 242, 0.22);
+}
+
+.orion-driver-model-card button:hover {
+  border-color: #5147e8;
+  background: #5147e8;
+  color: #ffffff;
 }
 
 .danger-button {
@@ -4020,6 +4070,11 @@ textarea {
   backdrop-filter: blur(18px);
 }
 
+.chat-media-backdrop {
+  background: rgba(14, 14, 18, 0.82);
+  backdrop-filter: blur(16px);
+}
+
 .approval-modal,
 .config-sheet,
 .file-context-menu,
@@ -4923,6 +4978,42 @@ select,
   font-size: 20px;
 }
 
+.chat-mode-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+  padding: 3px;
+  border: 1px solid var(--accent-border);
+  border-radius: 999px;
+  background: var(--accent-soft);
+}
+
+.chat-mode-switch button {
+  min-height: 26px;
+  border: 0;
+  border-radius: 999px;
+  padding: 0 10px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.chat-mode-switch button:hover {
+  color: var(--accent);
+  background: rgba(91, 92, 246, 0.08);
+}
+
+.chat-mode-switch button.active {
+  background: var(--accent);
+  color: #ffffff;
+  box-shadow: 0 8px 20px rgba(91, 92, 246, 0.22);
+}
+
 .composer-toolbar > button.assistant-loading-button,
 .composer-toolbar > button.assistant-loading-button:hover,
 .composer-toolbar > button.assistant-loading-button:focus-visible,
@@ -5257,6 +5348,144 @@ select,
 
 .orion-activity-float {
   padding: 14px;
+}
+
+.chat-image-result {
+  width: fit-content;
+  max-width: min(520px, 100%);
+  display: grid;
+  gap: 7px;
+  margin: 8px 0 2px;
+}
+
+.chat-image-result img {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: min(520px, 100%);
+  max-height: 420px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #ffffff;
+  object-fit: contain;
+  box-shadow: 0 14px 32px rgba(26, 26, 31, 0.12);
+}
+
+.chat-image-result figcaption {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.terminal-log p.system-line .line-text:has(.chat-image-result),
+.terminal-log p.error-line .line-text:has(.chat-image-result) {
+  display: inline-grid;
+  gap: 4px;
+}
+
+.chat-media-preview-trigger {
+  display: block;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: zoom-in;
+  line-height: 0;
+  position: relative;
+}
+
+.chat-media-preview-trigger video {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: min(520px, 100%);
+  max-height: 420px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  object-fit: contain;
+  box-shadow: 0 14px 32px rgba(26, 26, 31, 0.12);
+}
+
+.chat-video-play-indicator {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: 42px;
+  color: rgba(255, 255, 255, 0.92);
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.chat-media-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 32px;
+  background: rgba(0, 0, 0, 0.72);
+  backdrop-filter: blur(12px);
+  animation: chatMediaFadeIn 180ms ease-out;
+}
+
+.chat-media-modal {
+  position: relative;
+  display: grid;
+  gap: 10px;
+  max-width: min(960px, calc(100vw - 64px));
+  max-height: min(820px, calc(100vh - 64px));
+}
+
+.chat-media-modal .chat-media-full {
+  display: block;
+  max-width: 100%;
+  max-height: min(780px, calc(100vh - 120px));
+  border-radius: 10px;
+  object-fit: contain;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.5);
+}
+
+.chat-media-modal figcaption {
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 13px;
+  text-align: center;
+  line-height: 1.4;
+}
+
+.chat-media-close {
+  position: absolute;
+  top: -36px;
+  right: -4px;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.14);
+  color: rgba(255, 255, 255, 0.88);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+
+.chat-media-close:hover {
+  background: rgba(255, 255, 255, 0.28);
+}
+
+@keyframes chatMediaFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.message-content {
+  min-width: 0;
+  display: block;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .workflow-progress-float.expanded {
